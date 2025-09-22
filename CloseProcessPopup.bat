@@ -1074,7 +1074,7 @@ function Invoke-ViaSystemScheduledTaskAndWait {
 
     # Build Exec path + arguments
     $execPath      = $powerShellExePath
-    $argumentsLine = ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "{0}" -JsonPath "{1}" -Log "{2}"' -f $copiedBackendPath,$JsonPath,$script:LogPath)
+    $argumentsLine = ('-NoLogo -NoProfile -Ex Bypass -File "{0}" -JsonPath "{1}" -Log "{2}"' -f $copiedBackendPath,$JsonPath,$script:LogPath)
     $workingOfExec = Split-Path -Path $powerShellExePath -Parent
 
     # Connect COM root and register a task (replace if exist)
@@ -1775,3 +1775,4 @@ if (-not $Test) {
 } else { Write-CustomLog "Test mode -> not closing processes." }
 
 Stop-Script 0
+
