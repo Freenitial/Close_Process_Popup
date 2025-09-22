@@ -8,7 +8,7 @@
     if "%PROCESSOR_ARCHITECTURE%"=="AMD64" set "arch=x64"
     if defined PROCESSOR_ARCHITEW6432      set "arch=x64"
     if exist %SystemRoot%\system32\WindowsPowerShell\v1.0\powershell.exe   set "powershell=%SystemRoot%\system32\WindowsPowerShell\v1.0\powershell.exe"
-    if exist %SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe (set "powershell=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe")
+    if exist %SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe  set "powershell=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
 
     if /i "%~1"=="/?"       goto :help
     if /i "%~1"=="-?"       goto :help
@@ -1775,4 +1775,5 @@ if (-not $Test) {
 } else { Write-CustomLog "Test mode -> not closing processes." }
 
 Stop-Script 0
+
 
