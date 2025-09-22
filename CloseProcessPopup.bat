@@ -39,7 +39,7 @@
     echo          List of process names to terminate.
     echo          Example: -Process "chrome=Google Chrome","acrobat.exe=Adobe Acrobat"
     echo.
-    echo       -ProcessPath "DirPath1","DurPath2"
+    echo       -ProcessPath "DirPath1","DirPath2"
     echo          Exe files inside specified directory (recursively) to terminate 
     echo          Example: -ProcessPath "C:\Program Files\Google\","C:\Program Files\Adobe"
     echo          End a path with '\' means exact folder (else startswith wildcard)
@@ -1773,4 +1773,5 @@ if (-not $Test) {
     Write-CustomLog "Front-end reported success and no -Test flag set -> closing detected processes..."
     Close-DetectedProcesses -DetectedProcesses $DetectedProcesses -Attempts $Attempts
 } else { Write-CustomLog "Test mode -> not closing processes." }
+
 Stop-Script 0
