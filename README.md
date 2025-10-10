@@ -26,32 +26,6 @@ Plus, you can target anything.
 
 ---
 
-## Quick Start 🚀
-
-### Basic (local, elevated)
-
-```bat
-cmd /c "CPP.bat -Product "Adobe Acrobat" -Process "AcroRd32.exe=Acrobat Reader","chrome.exe=Google Chrome" -DLL AcroRd32.dll
-```
-
-### By folder (exact vs. prefix)
-
-```bat
-:: Exact folder and subfolders → end with backslash
--ProcessPath "C:\Program Files\Adobe\"
-
-:: Prefix (starts-with) rule → no trailing backslash
--ProcessPath "C:\Program Files\Adobe"
-```
-
-### By DLL (filename, full path or wildcard)
-
-```bat
--ProcessDLL acroRd32.dll,"C:\Program Files\Adobe\*.dll"
-```
-
----
-
 ## Arguments 🛠️
 
 - You must specify **at least one** of `-Process`, `-ProcessPath`, or `-ProcessDLL`.
