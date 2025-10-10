@@ -1,15 +1,16 @@
 # **Close Processes Popup (CPP)**
 
-**Detects running processes by name, path, or DLL, shows a countdown to save work, then closes them.**
+**Detects running processes by name, path, used DLL, or windows titles. Shows a popup warning (or not), then closes them.**
 
 ---
 
 ## Features ✨
 
-* 🔎 **Process discovery**: finds targets by **name** (`chrome.exe`), **path rules** (exact folder or prefix), or **DLL usage**.
+* 🔎 **Targeting**: Process name, process path, process using specified DLL, or window Title.
+* 🔎 **Multiple targeting**: Supports multiple targets per method, and * wildcards.
 * 🖥️ **PSADT-like GUI** (WinForms): Cards layout, app icons, live countdown, DPI-aware.
 * 👤 **Works from SYSTEM or Admin**: launches UI in the **active user session** (RDP/console) via `CreateProcessAsUser`.
-* 🧵 **Secure pipe**: streams the entire FrontEnd script via **STDIN** (no temp PS1 required).
+* 🧵 **Secure pipes**: streams between system/user via private pipes (no temp files, no named pipes).
 * 🪓 **Reliable closure**: grouped `taskkill /F /T` passes with verification.
 
 ---
@@ -21,6 +22,7 @@
 ## Why this tool?
 
 PSADT can be too complex if you just want a popup, there is a single script.
+Plus, you can target anything.
 
 ---
 
@@ -52,18 +54,20 @@ cmd /c "CPP.bat -Product "Adobe Acrobat" -Process "AcroRd32.exe=Acrobat Reader",
 
 ## Arguments 🛠️
 
-`-Product` is **required**. You must specify **at least one** of `-Process`, `-ProcessPath`, or `-ProcessDLL`.
+- You must specify **at least one** of `-Process`, `-ProcessPath`, or `-ProcessDLL`.
+- **If `-PopupTitle` is missing, POPUP will NOT BE SHOWN**. 
 
 | Parameter     | Description                                                                                                                                  | Example                                                            |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `Product`     | Display name shown in the popup and used to name logs.                                                                                       | `-Product "Adobe Acrobat"`                                         |
-| `Process`     | Executable names to target. If extension is missing, `.exe` is added.                  | `-Process "chrome.exe=Google Chrome","AcroRd32=Acrobat Reader"`        |
-| `ProcessPath` | Match processes by **executable path**. **With trailing `\`** = exact folder (that folder + subfolders). **Without** = prefix (starts-with). | `-ProcessPath "C:\Program Files\Adobe","C:\Program Files\Google"` |
+| `PopupTitle`  | Display name shown in the popup.                                                                                                             | `-PopupTitle "Adobe Acrobat"`                                      |
+| `Process`     | Executable names to target. Supports "=" to customize description in popup. Supports `*` wildcards.                                          | `-Process chrome.exe,"AcroRd32=Acrobat Reader"`                    |
+| `ProcessPath` | Match processes by **executable path**. Supports `*` wildcards.                                                                              | `-ProcessPath "C:\Program Files\Adobe","C:\Program Files\Google"`  |
 | `ProcessDLL`  | Match processes that **have a DLL loaded**. Accepts **filenames** (no slash), **full paths**, and `*` wildcards.                             | `-ProcessDLL acroRd32.dll,"C:\Program Files\Adobe\*.dll"`          |
+| `ProcessTitle`| Match windows by title. Supports "=" to filter by process. Supports `*` wildcards.                                                           | `-ProcessTitle *Paint,*wikipedia*=chrome.exe`                      |
 | `Timer`       | Seconds before the popup auto-closes and the backend proceeds.                                                                               | `-Timer 300`                                                       |
 | `Attempts`    | Number of grouped `taskkill` passes (1s between).                                                                                            | `-Attempts 5`                                                      |
-| `Test`        | Shows the GUI and logs, but do **not** kill processes.                                                                          | `-Test`                                                            |
-| `Log`         | File or folder for the log.                                                                    | `-Log "C:\Logs"`                                                   |
+| `Test`        | Shows the GUI and logs, but do **not** kill processes.                                                                                       | `-Test`                                                            |
+| `Log`         | File or folder for the log.                                                                                                                  | `-Log "C:\Logs"`                                                   |
 
 
 ---
@@ -108,11 +112,11 @@ powershell -Ex Bypass -Command "Invoke-Command -ComputerName %TARGET% -ScriptBlo
 
 | Code | Meaning                                                |
 | ---: | ------------------------------------------------------ |
-|    0 | Success (FrontEnd executed)                            |
+|    0 | Success                                                |
 |    1 | Unknown general launch/error                           |
 |    2 | No requested processes are currently running           |
-|    3 | Timeout waiting FrontEnd process                       |
-|    4 | Exception during FrontEnd launch                       |
+|    3 | Timeout waiting helper/popup process                   |
+|    4 | Exception during helper/popup launch                   |
 |    5 | Failed to create pipe / write to STDIN                 |
 |    6 | `WTSEnumerateSessions` failed                          |
 |    7 | `WTSQueryUserToken` failed                             |
@@ -120,7 +124,7 @@ powershell -Ex Bypass -Command "Invoke-Command -ComputerName %TARGET% -ScriptBlo
 |    9 | `CreateProcessAsUser` failed                           |
 |   10 | No Admin nor SYSTEM privilege at launch                |
 |   11 | Missing/invalid required arguments                     |
-|   12 | FrontEnd exit code unavailable                         |
+|   12 | Popup exit code unavailable                            |
 |   13 | Unsupported context (non-interactive and not SYSTEM)   |
 |   14 | Unknown context                                        |
 |   15 | Some processes still running after `taskkill` attempts |
@@ -136,42 +140,34 @@ powershell -Ex Bypass -Command "Invoke-Command -ComputerName %TARGET% -ScriptBlo
 
 ### 2) Discovery (Single Pass)
 
-* Parses `-Process` entries; supports `exe=Label`.
-* Builds **path rules** from `-ProcessPath`:
-  * **Exact folder** if the path ends with `\` (that folder + subfolders only).
-  * **Prefix** if no trailing `\` (starts-with, e.g., “Google” also matches “Google Drive”).
-* If `-ProcessDLL` is used, processes are matched by **loaded module** (filename-only when no slash; full path otherwise; `*` supported).
+* Parses `-Process` entries; supports `exeName=LabelForPopup`.
+* Parses `-ProcessPath` entries.
+* Parses `-ProcessDLL` entries. processes are matched by **loaded module** (filename-only when no slash; full path otherwise).
+* Parses `-ProcessTitles` entries; supports `YourWindowTitle=FilterByProcess`.
 * Enumerates processes via **Win32** (`EnumProcesses`, `QueryFullProcessImageName`) and falls back to WMI (`Win32_Process`) when needed.
-* Extracts **app icons** (Base64 PNG) for the UI cards.
+* Extracts **app icons** for the UI cards.
 
-### 3) Session Hop & FrontEnd
+### 3) Popup
 
 * Finds the **active interactive session** (RDP or console) with `WTSEnumerateSessions` and `WTSGetActiveConsoleSessionId`.
 * If running as **SYSTEM**, duplicates user token (`WTSQueryUserToken` + `DuplicateTokenEx`) and spawns PowerShell in that session with **`CreateProcessAsUser`**.
-* Streams the entire FrontEnd script through a **private, inheritable STDIN pipe** (no named pipe, no file on disk).
-* FrontEnd = WinForms app: DPI-aware, draggable window (with prevention of exiting the screen), **bottom-right** placement, countdown.
+* Streams the entire WindowHelper/Popup script through a **private, inheritable STDIN pipe** (no named pipe, no file on disk).
+* Popup = WinForms app: DPI-aware, draggable window (with prevention of exiting the screen), **bottom-right** placement, countdown.
 * You can insert base64 icon in the lateral bar, by completing "$SidebarLogoBase64" variable.
 
-### 4) Closure Strategy
+### 4) Closure
 
 * On popup close (user clicks or countdown hits zero), backend performs up to **N grouped passes** of:
   * `taskkill /F /T /IM <names...>` in batches (handles children).
+  * Except for windows found via -ProcessTitle, only PID will be closed.
   * 1s sleep between passes.
   * Final verification via WMI; returns `15` if survivor processes remains.
 
 ---
 
-## Security Notes 🔒
-
-* Requires **Administrator** or **SYSTEM** at launch (returns `10` otherwise).
-* The FrontEnd transport uses a **parent-owned anonymous pipe**; write handle is marked **non-inheritable** for child; nothing is **listening** on a public name.
-* No temporary PS script is needed (script is streamed).
-
----
-
 ## Logging 🧾
 
-* Default: `%windir%\Temp\<Product>_CloseProcessPopup.log`
+* Default: `%windir%\Temp\<PopupTitle>_CloseProcessPopup.log`
 * You can pass a directory or a full file path via `-Log`.
   If a folder is supplied, a filename is generated automatically.
 
@@ -180,10 +176,9 @@ powershell -Ex Bypass -Command "Invoke-Command -ComputerName %TARGET% -ScriptBlo
 ## Compatibility ✅
 
 * **PowerShell 2.0 → 5.1 tested**
-* **Windows XP → Windows 11**
-* **x86/x64** aware, `Sysnative` handled automatically.
+* **Windows 7 → Windows 11 tested**
 * Works across **RDP/console** sessions; requires an **interactive session** (returns `22` if none).
-* **SCCM/Intune**: Run as SYSTEM for seamless UI in user session; parse return code for retry/deferral logic.
+* **SCCM/Intune**: Run as SYSTEM for seamless UI in user session.
 
 ---
 
