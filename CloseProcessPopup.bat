@@ -4,7 +4,7 @@
     set "CPPversion=1.1"
     title Close Processes Popup v%CPPversion% Launcher
 
-    for %%A in ("/?" "-?" "--?" "/help" "-help" "--help") do if /I "%~1"=="%%~A" goto :help
+    for %%A in ("" "/?" "-?" "--?" "/help" "-help" "--help") do if /I "%~1"=="%%~A" goto :help
     
     if exist %SystemRoot%\system32\WindowsPowerShell\v1.0\powershell.exe   set "powershell=%SystemRoot%\system32\WindowsPowerShell\v1.0\powershell.exe"
     if exist %SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe  set "powershell=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
@@ -19,7 +19,7 @@
     exit /b %errorlevel% 
 
     :help
-    echo.
+    cls
     echo.
     echo    =============================================================================
     echo                              Close Processes Popup v%CPPversion%
@@ -93,7 +93,6 @@
     echo    0   = Success
     echo    1   = Unknown general launch/error
     echo    2   = No requested processes are currently running
-    echo    21  = Failed to enumerate processes
     echo    22  = No interactive session open
     echo    3   = Timeout waiting Helper/Popup process
     echo    4   = Exception during Helper/Popup launch
@@ -110,6 +109,8 @@
     echo    15  = Some processes still running after taskkill
     echo.
     echo    =============================================================================
+    echo.
+    echo Press any key to exit.
     echo.
     pause >nul & exit /b
 #>
@@ -130,13 +131,13 @@ if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
     Write-Host "ERROR: Need Admin or System rights at launch"
     exit 10
 }
-if (-not ($process -or $ProcessPath -or $ProcessTitle)) {
-    $warn = "ERROR: Incorrect arguments provided. Required arguments:`n" +
+if (-not ($process -or $ProcessPath -or $ProcessTitle -or $ProcessDLL)) {
+    $warn = "`nERROR: Incorrect arguments provided. Required arguments:`n`n" +
             "   -PopupTitle xxx  (if you want to show popup, otherwise no popup)`n" +
             "       AND`n" +
             "   -Process xxx   OR   -ProcessPath xxx   OR   -ProcessDLL xxx   OR   -ProcessTitle xxx`n"
     Write-Host $warn
-    Write-Host "Arguments provided:`nPopupTitle= $PopupTitle`nProcess= $Process`nProcessPath= $ProcessPath`nLog= $Log"
+    Write-Host "Arguments provided:`nPopupTitle= $PopupTitle`nProcess= $Process`nProcessPath= $ProcessPath`nProcessDLL= $ProcessDLL"
     exit 11
 }
 $sys32    = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -2044,3 +2045,4 @@ if (-not $Test) {
 } else { Write-CustomLog "Test mode -> not closing processes." }
 
 Stop-Script 0
+
