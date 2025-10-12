@@ -89,6 +89,7 @@ powershell -Ex Bypass -Command "Invoke-Command -ComputerName %TARGET% -ScriptBlo
 |    0 | Success                                                |
 |    1 | Unknown general launch/error                           |
 |    2 | No requested processes are currently running           |
+|   22 | No interactive session open                            |
 |    3 | Timeout waiting helper/popup process                   |
 |    4 | Exception during helper/popup launch                   |
 |    5 | Failed to create pipe / write to STDIN                 |
