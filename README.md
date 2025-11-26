@@ -103,6 +103,7 @@ powershell -Ex Bypass -Command "Invoke-Command -ComputerName %TARGET% -ScriptBlo
 |   13 | Unsupported context (non-interactive and not SYSTEM)   |
 |   14 | Unknown context                                        |
 |   15 | Some processes still running after `taskkill` attempts |
+|   16 | Critical system process detected, cannot proceed       |
 
 ---
 
