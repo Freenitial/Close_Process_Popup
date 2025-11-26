@@ -1,7 +1,7 @@
 
 <# ::
     @echo off & setlocal
-    set "CPPversion=1.1"
+    set "CPPversion=1.2"
     title Close Processes Popup v%CPPversion% Launcher
 
     for %%A in ("" "/?" "-?" "--?" "/help" "-help" "--help") do if /I "%~1"=="%%~A" goto :help
@@ -40,11 +40,11 @@
     echo          Close Exe files inside specified directory to terminate (Wildcard * compatible)
     echo          Example: -ProcessPath "C:\Program Files\Google\","C:\Program Files\Adobe*"
     echo.
-    echo       -ProcessTitles (string list)
+    echo       -ProcessTitle (string list)
     echo          Close PID by window title. Can filter by process when adding "="
     echo          Before "=" : Window title (Wildcard * compatible)
     echo          After  "=" : Filter by process
-    echo          Example: -ProcessTitles *paint,Message*=CSRSS.exe
+    echo          Example: -ProcessTitle *paint,Message*=CSRSS.exe
     echo.
     echo       -ProcessDLL (string list)
     echo          Close processes that are using specified DLL (Wildcard * compatible)
@@ -107,6 +107,7 @@
     echo    13  = Unsupported context
     echo    14  = Unknown context
     echo    15  = Some processes still running after taskkill
+    echo    16  = Critical system process detected, cannot proceed
     echo.
     echo    =============================================================================
     echo.
@@ -324,10 +325,11 @@ function Get-RunningProcesses {
     <#
     Purpose : Build the detectedProcesses list with a single EnumProcesses scan (+ one EnumWindows pass if -ProcessTitle is used):
     - -Processes supports "*" wildcards on executable names ("chrome*.exe", "win* = My caption").
-    - -ProcessesPaths is treated as raw wildcard patterns (use "*" where needed). No more implicit prefix/exact.
-    - -ProcessDLL keeps wildcard support like before.
-    - -ProcessTitle accepts wildcards too; syntax optionally supports "TitlePattern=ProcessNamePattern" to pre-filter by process name.
+    - -ProcessesPaths is treated as raw wildcard patterns (use "*" where needed).
+    - -ProcessDLL supports "*" wildcard wildcard.
+    - -ProcessTitle accepts wildcards ; syntax optionally supports "TitlePattern=ProcessNamePattern" to pre-filter by process name.
     - Aggregate PIDs by executable name for non-title sources; exit 2 if nothing is running.
+    - Critical system processes cause exit 16 if detected.
 
     Returns detectedProcesses (array of hashtables):
         @{ Name; ShortName; Description; ExePath; IconBase64; Process_Ids[]; [CloseByPid=$true when source=Title] }
@@ -344,7 +346,7 @@ function Get-RunningProcesses {
         } catch { $null } finally { $ms.Dispose(); $bmp.Dispose() }
     }
 
-    # 1) -------------- Normalize the -Process entries (now supports wildcards) --------------
+    # 1) -------------- Normalize the -Process entries (supports wildcards) --------------
     $requestedByLowerName=@{}   # key => meta (for logging/description/source)
     $explicitNamesLower=@{}     # exact names only (to report "not running")
     $explicitNamePatterns=@()   # wildcard name patterns: @{ PatternLower; Description }
@@ -368,7 +370,6 @@ function Get-RunningProcesses {
     }
 
     # 2) -------------- Normalize the -ProcessPath entries as wildcard patterns --------------
-    # Each pattern entry: @{ PatternLower; RawInput }
     $pathPatterns=@()
     $parsedPathArgs=$ProcessesPaths
     foreach($pathArgument in $parsedPathArgs){
@@ -403,7 +404,6 @@ function Get-RunningProcesses {
     }
 
     # 4) -------------- Prepare Title queries --------------
-    # Each entry: @{ TitlePatternLower; ProcNamePatternLower (nullable) }
     $titleQueries=@()
     if($ProcessTitles -and $ProcessTitles.Count -gt 0){
         foreach($arg in $ProcessTitles){
@@ -411,7 +411,7 @@ function Get-RunningProcesses {
             if($arg -like "*=*"){
                 $kv=$arg -split "=",2
                 $tpat=$kv[0].Trim()
-                $ppat=[IO.Path]::GetFileName($kv[1].Trim()) # accept raw or path; keep file name only
+                $ppat=[IO.Path]::GetFileName($kv[1].Trim())
                 if($ppat -and ($ppat -notmatch '\.exe$')){ $ppat+='.exe' }
                 $titleQueries+=,@{TitlePatternLower=$tpat.ToLowerInvariant();ProcNamePatternLower=($ppat.ToLowerInvariant())}
             }else{
@@ -620,7 +620,349 @@ function Get-RunningProcesses {
         }
     }
 
-    # 8) -------------- Logging & return --------------
+    # 8) -------------- Check for critical system processes --------------
+    # Processes are considered critical if:
+    #   - Their name is in the CriticalProcessNames list, OR
+    #   - For DLL/Path sources: their executable path is under a protected system directory
+    $criticalFound = @()
+
+    $script:CriticalProcessNames = @(
+        # Core Windows kernel and session processes
+        'system',
+        'idle',
+        'registry',
+        'memory compression',
+        'secure system',
+        'smss.exe',
+        'csrss.exe',
+        'wininit.exe',
+        'winlogon.exe',
+        'services.exe',
+        'lsass.exe',
+        'lsaiso.exe',
+        'lsm.exe',
+        
+        # Service hosting
+        'svchost.exe',
+        'sihost.exe',
+        'taskhostw.exe',
+        'taskhost.exe',
+        'runtimebroker.exe',
+        
+        # Desktop and shell
+        'dwm.exe',
+        'explorer.exe',
+        'conhost.exe',
+        'ctfmon.exe',
+        'fontdrvhost.exe',
+        'dllhost.exe',
+        
+        # Audio subsystem
+        'audiodg.exe',
+        'audiosrv.dll',
+        
+        # Windows Security / Defender
+        'msmpeng.exe',
+        'msmpsvc.exe',
+        'nissrv.exe',
+        'securityhealthservice.exe',
+        'securityhealthhost.exe',
+        'securityhealthsystray.exe',
+        'smartscreen.exe',
+        'sgrmbroker.exe',
+        'sensecncproxy.exe',
+        'sense.exe',
+        
+        # Credential and authentication
+        'logonui.exe',
+        'userinit.exe',
+        'consent.exe',
+        'credentialuibroker.exe',
+        'lockapp.exe',
+        'credentialenrollmentmanager.exe',
+        
+        # Windows Update and servicing
+        'trustedinstaller.exe',
+        'tiworker.exe',
+        'usoclient.exe',
+        'usocoreworker.exe',
+        'usocore.exe',
+        'wuauclt.exe',
+        'musnotification.exe',
+        'musnotificationux.exe',
+        'waaborker.exe',
+        
+        # Windows Installer
+        'msiexec.exe',
+        'msiserver.exe',
+        
+        # Print spooler
+        'spoolsv.exe',
+        'printfilterpipelinesvc.exe',
+        
+        # WMI and COM
+        'wmiprvse.exe',
+        'unsecapp.exe',
+        'wmiapsrv.exe',
+        'msdtc.exe',
+        
+        # Modern UI / UWP shell components
+        'applicationframehost.exe',
+        'shellexperiencehost.exe',
+        'startmenuexperiencehost.exe',
+        'searchui.exe',
+        'searchapp.exe',
+        'searchhost.exe',
+        'searchindexer.exe',
+        'searchfilterhost.exe',
+        'searchprotocolhost.exe',
+        'textinputhost.exe',
+        'systemsettings.exe',
+        'systemsettingsbroker.exe',
+        'settingsynchost.exe',
+        'phoneexperiencehost.exe',
+        'gamebarpresencewriter.exe',
+        'gamebar.exe',
+        'gamebarftserver.exe',
+        
+        # Background and scheduled tasks
+        'backgroundtaskhost.exe',
+        'backgroundtransferhost.exe',
+        'taskhostex.exe',
+        
+        # Device and hardware
+        'dashost.exe',
+        'devicecensus.exe',
+        'deviceenroller.exe',
+        'wudfhost.exe',
+        'driverhost.exe',
+        'umdfhost.exe',
+        
+        # Network and connectivity
+        'smphost.exe',
+        'lsm.exe',
+        'netman.exe',
+        'nlasvc.exe',
+        'dns.exe',
+        'dhcp.exe',
+        'iphlpsvc.exe',
+        'ncsi.exe',
+        'nsi.exe',
+        
+        # Remote Desktop
+        'rdpclip.exe',
+        'rdpinput.exe',
+        'rdpsa.exe',
+        'rdpshell.exe',
+        'tstheme.exe',
+        'rdpdr.exe',
+        
+        # Error reporting
+        'werfault.exe',
+        'werfaultsecure.exe',
+        'wermgr.exe',
+        
+        # Compatibility and telemetry
+        'compattelrunner.exe',
+        'microsoftedgeupdate.exe',
+        
+        # Hyper-V and virtualization
+        'vmwp.exe',
+        'vmms.exe',
+        'vmcompute.exe',
+        'vmmem.exe',
+        'vmconnect.exe',
+        'hvix64.exe',
+        'hvax64.exe',
+        
+        # Windows Subsystem for Linux
+        'wsl.exe',
+        'wslhost.exe',
+        'wslservice.exe',
+        
+        # Cryptographic services
+        'cng.exe',
+        'cryptsvc.dll',
+        
+        # Event logging
+        'eventlog.exe',
+        
+        # Power management
+        'powercfg.exe',
+        
+        # Windows Time
+        'w32time.exe',
+        
+        # Group Policy
+        'gpupdate.exe',
+        'gpsvc.exe',
+        
+        # Tablet / Touch input
+        'tabletinputservice.exe',
+        'tabtip.exe',
+        'inputpersonalization.exe',
+        
+        # Accessibility
+        'atbroker.exe',
+        'narrator.exe',
+        'magnify.exe',
+        'osk.exe',
+        'utilman.exe',
+        
+        # Windows Firewall
+        'mpssvc.exe',
+        'bfe.exe',
+        
+        # Storage and disk
+        'vds.exe',
+        'vdsldr.exe',
+        'defrag.exe',
+        'disksnapshot.exe',
+        
+        # Clipboard
+        'clipboardserver.exe',
+        
+        # Windows Store / AppX
+        'wsservice.exe',
+        'clipup.exe',
+        'appxsvc.exe',
+        'licensingdiag.exe',
+        
+        # Speech
+        'speechruntime.exe',
+        
+        # Location
+        'lfsvc.exe',
+        
+        # Biometrics
+        'wbiosrvc.exe',
+        
+        # Fonts
+        'fntcache.exe',
+        
+        # Graphics drivers (common)
+        'igfxem.exe',
+        'igfxcuiservice.exe',
+        'igfxhk.exe',
+        'igfxtray.exe',
+        'nvcontainer.exe',
+        'nvdisplay.container.exe',
+        'nvspcaps64.exe',
+        'nvcplui.exe',
+        'atieclxx.exe',
+        'atiesrxx.exe',
+        'amdow.exe',
+        'amddvr.exe',
+        'radeonsoft.exe',
+        
+        # Intel services
+        'intelcphecisvca.exe',
+        'intelcphecisvc.exe',
+        'jhi_service.exe',
+        
+        # Common system tray and services
+        'securityhealthsystray.exe',
+        'iastordatamgrsvc.exe',
+        
+        # Antimalware Scan Interface
+        'amsi.dll',
+        
+        # Windows Management Instrumentation
+        'scrcons.exe',
+        'wbemcore.dll'
+    )
+    
+    # System directories where processes should not be terminated when detected via DLL or Path
+    $script:ProtectedSystemPaths = @(
+        $env:SystemRoot,
+        (Join-Path $env:SystemRoot "System32"),
+        (Join-Path $env:SystemRoot "SysWOW64"),
+        (Join-Path $env:SystemRoot "SystemApps"),
+        (Join-Path $env:SystemRoot "WinSxS"),
+        (Join-Path $env:ProgramData "Microsoft\Windows Defender"),
+        (Join-Path ${env:ProgramFiles} "Windows Defender"),
+        (Join-Path ${env:ProgramFiles(x86)} "Windows Defender"),
+        (Join-Path ${env:ProgramFiles} "Windows Security"),
+        (Join-Path ${env:ProgramFiles} "WindowsApps")
+    ) | Where-Object { $_ -and (Test-Path $_ -ErrorAction SilentlyContinue) } | ForEach-Object { $_.ToLowerInvariant().TrimEnd('\') }
+
+    foreach ($k in $detectedByKey.Keys) {
+        $entry = $detectedByKey[$k]
+        $procNameLower = $entry.Name.ToLowerInvariant()
+        $meta = $requestedByLowerName[$k]
+        $src = if ($meta -and $meta.Source) { $meta.Source } else { 'Unknown' }
+        
+        $isCritical = $false
+        $reason = ""
+        
+        # Check 1: Process name is in the critical processes list
+        if ($script:CriticalProcessNames -contains $procNameLower) {
+            $isCritical = $true
+            $reason = "Process name is in critical system processes list"
+        }
+        # Check 2: For DLL and Path detection sources, verify the executable is not in a protected system path
+        elseif ($src -eq 'DLL' -or $src -eq 'Path') {
+            if ($entry.ExePath) {
+                $exePathLower = $entry.ExePath.ToLowerInvariant().TrimEnd('\')
+                $exeDirLower = [IO.Path]::GetDirectoryName($exePathLower)
+                if ($exeDirLower) {
+                    $exeDirLower = $exeDirLower.TrimEnd('\')
+                    foreach ($protectedPath in $script:ProtectedSystemPaths) {
+                        # Check if exe directory starts with or equals a protected path
+                        if ($exeDirLower -eq $protectedPath -or $exeDirLower.StartsWith($protectedPath + '\')) {
+                            $isCritical = $true
+                            $reason = "Process executable is located in protected system directory ($protectedPath)"
+                            break
+                        }
+                    }
+                }
+            }
+        }
+        
+        if ($isCritical) {
+            $criticalFound += ,@{
+                Name = $entry.Name
+                Source = $src.ToUpper()
+                SourceDetail = if ($meta) { $meta.SourceDetail } else { $null }
+                ExePath = $entry.ExePath
+                Reason = $reason
+                PIDs = $entry.Process_Ids
+            }
+        }
+    }
+    
+    if ($criticalFound.Count -gt 0) {
+        Write-CustomLog "===================================================================="
+        Write-CustomLog "CRITICAL ERROR: System-essential processes detected - CANNOT PROCEED"
+        Write-CustomLog "===================================================================="
+        Write-CustomLog ""
+        Write-CustomLog "The following processes were matched but cannot be terminated:"
+        Write-CustomLog ""
+        foreach ($crit in $criticalFound) {
+            Write-CustomLog ("  Process  : {0}" -f $crit.Name)
+            Write-CustomLog ("  Source   : {0}" -f $crit.Source)
+            if ($crit.SourceDetail) {
+                Write-CustomLog ("  Matched  : {0}" -f $crit.SourceDetail)
+            }
+            if ($crit.ExePath) {
+                Write-CustomLog ("  Path     : {0}" -f $crit.ExePath)
+            }
+            Write-CustomLog ("  PIDs     : {0}" -f (($crit.PIDs) -join ", "))
+            Write-CustomLog ("  Reason   : {0}" -f $crit.Reason)
+            Write-CustomLog "  ---"
+        }
+        Write-CustomLog ""
+        Write-CustomLog "RECOMMENDATION:"
+        Write-CustomLog "  - If using -ProcessDLL: Ensure the DLL is not a common system library."
+        Write-CustomLog "    Avoid broad patterns that match Windows components."
+        Write-CustomLog "  - If using -ProcessPath: Exclude system directories like C:\Windows\*"
+        Write-CustomLog "    Target only your application's installation directory."
+        Write-CustomLog ""
+        Write-CustomLog "Aborting to prevent system instability. Exit code: 16"
+        Stop-Script 16
+    }
+
+    # 9) -------------- Logging & return --------------
     $detectedProcesses=@(); foreach($k in $detectedByKey.Keys){ $detectedProcesses+=,$detectedByKey[$k] }
     $runningForLog=@()
     foreach($k in $detectedByKey.Keys){
@@ -1808,7 +2150,7 @@ Enable-WindowDragOnControl `$MainContent.GetControlFromPosition(0,0)
 `$MessageHook = New-Object Win32MsgHelper `$MainForm
 `$MessageHook.add_DragFinished({
     `$primary = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    `$frmBounds = `$MainForm.Bounds  # ← no more `$b collision
+    `$frmBounds = `$MainForm.Bounds
     `$x = [Math]::Max(`$primary.Left,[Math]::Min(`$frmBounds.Left,`$primary.Right-`$frmBounds.Width))
     `$y = [Math]::Max(`$primary.Top,[Math]::Min(`$frmBounds.Top,`$primary.Bottom-`$frmBounds.Height))
     if (`$x -ne `$frmBounds.Left -or `$y -ne `$frmBounds.Top -or [System.Windows.Forms.Screen]::FromControl(`$MainForm) -ne [System.Windows.Forms.Screen]::PrimaryScreen) {
@@ -2045,4 +2387,3 @@ if (-not $Test) {
 } else { Write-CustomLog "Test mode -> not closing processes." }
 
 Stop-Script 0
-
