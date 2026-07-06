@@ -1,7 +1,6 @@
-
 <# ::
     @echo off & setlocal
-    set "CPPversion=1.2"
+    set "CPPversion=1.3"
     title Close Processes Popup v%CPPversion% Launcher
 
     for %%A in ("" "/?" "-?" "--?" "/help" "-help" "--help") do if /I "%~1"=="%%~A" goto :help
@@ -10,10 +9,15 @@
     if exist %SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe  set "powershell=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
 
     set args=%*
+    if defined args set args=%args:^=^^%
+    if defined args set args=%args:<=^<%
+    if defined args set args=%args:>=^>%
+    if defined args set args=%args:&=^&%
+    if defined args set args=%args:|=^|%
     if defined args set "args=%args:"=\"%"
     
     :: PowerShell self-read, skipping batch part
-    %powershell% -NoLogo -NoProfile -Ex Bypass -Command ^
+    "%powershell%" -NoLogo -NoProfile -Ex Bypass -Command ^
         "$sb=[ScriptBlock]::Create([IO.File]::ReadAllText('%~f0'));& $sb @args" %args%
 
     exit /b %errorlevel% 
@@ -78,7 +82,7 @@
     echo       cmd /c ""C:\Path\CloseProcessPopup.bat" -PopupTitle "ADOBE" -Process "chrome.exe=Google Chrome","Acrord32=Acrobat Reader" -ProcessPath "C:\Program Files\Google","C:\Program Files\Adobe" -Log "C:\Logs""
     echo.
     echo       ^> SYSTEM 
-    echo       schtasks /create /tn "SysPWSh" /tr "cmd /c \"\"C:\Path\backend.bat\" -Process \"chrome=chrome\" -PopupTitle \"ADOBE\" -test\"" /sc onstart /ru SYSTEM ^& schtasks /run /tn "SysPWSh" ^& schtasks /delete /tn "SysPWSh" /f
+    echo       schtasks /create /tn "SysPWSh" /tr "cmd /c \"\"C:\Path\CloseProcessPopup.bat\" -Process \"chrome=Google Chrome\" -PopupTitle \"ADOBE\" -test\"" /sc onstart /ru SYSTEM ^& schtasks /run /tn "SysPWSh" ^& schtasks /delete /tn "SysPWSh" /f
     echo.
     echo       ^> REMOTE 
     echo       powershell -Ex Bypass -Command "Invoke-Command -ComputerName ANY -Authentication Negotiate -Credential (New-Object System.Management.Automation.PSCredential('ANY\AdminName',(ConvertTo-SecureString 'AdminPassword' -AsPlainText -Force))) -ScriptBlock { param($batContent,$extraArgs) $Dest=\"$($env:SystemRoot)\Temp\CloseProcessPopup.bat\"; $utf8Bom = New-Object System.Text.UTF8Encoding $false; [System.IO.File]::WriteAllText($Dest,$batContent,$utf8Bom); ^& cmd.exe /c \"\"$Dest\" $extraArgs\"; $LASTEXITCODE } -ArgumentList (Get-Content -Path 'C:\SourcePath\CloseProcessPopup.bat' -Raw), '-Process \"Taskmgr.exe=Task Manager\" -Description \"Autodesk\" -test'"
@@ -108,6 +112,7 @@
     echo    14  = Unknown context
     echo    15  = Some processes still running after taskkill
     echo    16  = Critical system process detected, cannot proceed
+    echo    17  = Failed to enumerate running processes
     echo.
     echo    =============================================================================
     echo.
@@ -121,7 +126,7 @@ Param(
     [Parameter(Mandatory=$false)][Alias('ProductName','Product')]                     [string]$PopupTitle,     # -PopupTitle  "Adobe Acrobat" (NO POPUP IF MISSING)
     [Parameter(Mandatory=$false)][Alias('Processes','CloseProcess','CloseProcesses')] [string[]]$Process,      # -Process     "chrome=Google Chrome","acrobat.exe=Adobe Acrobat"
     [Parameter(Mandatory=$false)][Alias('Path','Paths')]                              [string[]]$ProcessPath,  # -ProcessPath "C:\Program Files\Google","C:\Program Files\Adobe"
-    [Parameter(Mandatory=$false)][Alias('Title','Titles','ProcessTitles')]            [string[]]$ProcessTitle, # -ProcessDLL  acroRd32.dll,"C:\Program Files\Adobe\*.dll"
+    [Parameter(Mandatory=$false)][Alias('Title','Titles','ProcessTitles')]            [string[]]$ProcessTitle, # -ProcessTitle "*paint","Message*=CSRSS.exe"
     [Parameter(Mandatory=$false)][Alias('DLL','DLLpattern','UnlockDLL')]              [string[]]$ProcessDLL,   # -ProcessDLL  acroRd32.dll,"C:\Program Files\Adobe\*.dll"
     [Parameter(Mandatory=$false)][Alias('CountDown')]                                 [int]$Timer=600,         # -Timer 600   (in seconds)
     [Parameter(Mandatory=$false)][Alias('Retry')]                                     [int]$Attempts=8,        # -Attempts 8  (kill process every second, 8 times)
@@ -129,16 +134,16 @@ Param(
     [Parameter(Mandatory=$false)][Alias('LogFile','LogName','LogPath')]               [string]$Log             # -Log MyLog.log  OR  -Log C:\MyPath\MyLog.log
 )
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "ERROR: Need Admin or System rights at launch"
+    Write-Host "ERROR : Need Admin or System rights at launch"
     exit 10
 }
 if (-not ($process -or $ProcessPath -or $ProcessTitle -or $ProcessDLL)) {
-    $warn = "`nERROR: Incorrect arguments provided. Required arguments:`n`n" +
+    $warn = "`nERROR : Incorrect arguments provided. Required arguments :`n`n" +
             "   -PopupTitle xxx  (if you want to show popup, otherwise no popup)`n" +
             "       AND`n" +
             "   -Process xxx   OR   -ProcessPath xxx   OR   -ProcessDLL xxx   OR   -ProcessTitle xxx`n"
     Write-Host $warn
-    Write-Host "Arguments provided:`nPopupTitle= $PopupTitle`nProcess= $Process`nProcessPath= $ProcessPath`nProcessDLL= $ProcessDLL"
+    Write-Host "Arguments provided :`nPopupTitle= $PopupTitle`nProcess= $Process`nProcessPath= $ProcessPath`nProcessDLL= $ProcessDLL"
     exit 11
 }
 $sys32    = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -183,7 +188,7 @@ public class WtsApi32 {
 [StructLayout(LayoutKind.Sequential)]
 public struct WTS_SESSION_INFO { public int SessionId; public IntPtr pWinStationName; public int State; }
 public class Win32Api {
-    [Flags] public enum ProcessAccessFlags : uint { PROCESS_QUERY_INFORMATION=0x0400, PROCESS_VM_READ=0x0010 }
+    [Flags] public enum ProcessAccessFlags : uint { PROCESS_TERMINATE=0x0001, PROCESS_VM_READ=0x0010, PROCESS_QUERY_INFORMATION=0x0400, SYNCHRONIZE=0x00100000 }
     [Flags] public enum ListModulesOptions : uint { LIST_MODULES_ALL=0x03 }
     public const int HANDLE_FLAG_INHERIT=0x1;
     [StructLayout(LayoutKind.Sequential)] public struct SECURITY_ATTRIBUTES { public int nLength; public IntPtr lpSecurityDescriptor; [MarshalAs(UnmanagedType.Bool)] public bool bInheritHandle; }
@@ -196,7 +201,7 @@ public class Win32Api {
     [DllImport("kernel32.dll", SetLastError=true)] public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr OpenProcess(ProcessAccessFlags processAccess, bool bInheritHandle, int processId);
     [DllImport("psapi.dll", SetLastError = true)] public static extern bool EnumProcesses([MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.U4)] int[] processIds, int size, [MarshalAs(UnmanagedType.U4)] out int bytesReturned);
-    [DllImport("psapi.dll", SetLastError = true)] public static extern bool EnumProcessModules(IntPtr hProcess, [Out] IntPtr[] lphModule, int cb, [MarshalAs(UnmanagedType.U4)] out int lpcbNeeded);
+    [DllImport("psapi.dll", SetLastError = true)] public static extern bool EnumProcessModulesEx(IntPtr hProcess, [Out] IntPtr[] lphModule, int cb, [MarshalAs(UnmanagedType.U4)] out int lpcbNeeded, uint dwFilterFlag);
     [DllImport("psapi.dll", CharSet = CharSet.Auto, SetLastError = true)]  public static extern uint GetModuleFileNameEx(IntPtr hProcess, IntPtr hModule, [Out] StringBuilder lpBaseName, uint nSize);
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)] public static extern bool QueryFullProcessImageName(IntPtr hProcess, int flags, StringBuilder exeName, ref int size);
 }
@@ -209,16 +214,50 @@ public class Win32Api {
 
 function Stop-Script([int]$ExitCode) {
     try {Write-CustomLog "========================================="; Write-CustomLog "" -noprefix} catch {}
+    try { if ($script:LogMutex) { $script:LogMutex.Close() } } catch {}
     exit $ExitCode
+}
+
+function Get-LogMutexName([string]$LogFilePath) {
+    # The mutex name is derived from the log path so concurrent deployments writing to distinct logs never serialize each other
+    # The Global prefix is mandatory : a SYSTEM process lives in session 0 while the popup lives in the interactive user session, and only the Global namespace is shared between them
+    $md5Provider = [System.Security.Cryptography.MD5]::Create()
+    $hashBytes = $md5Provider.ComputeHash([Text.Encoding]::UTF8.GetBytes($LogFilePath.ToLowerInvariant()))
+    $md5Provider.Clear()
+    $hexBuilder = New-Object Text.StringBuilder
+    foreach($hashByte in $hashBytes){ [void]$hexBuilder.Append($hashByte.ToString('x2')) }
+    return ("Global\CloseProcessPopup_" + $hexBuilder.ToString())
+}
+
+function Open-LogMutex([string]$MutexName) {
+    # The explicit DACL grants Authenticated Users synchronize and modify rights, otherwise a mutex created by SYSTEM would deny access to the popup running in the user session
+    try {
+        $mutexCreatedNew = $false
+        $mutexSecurity = New-Object System.Security.AccessControl.MutexSecurity
+        $authenticatedUsersSid = New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::AuthenticatedUserSid,$null)
+        $mutexAccessRule = New-Object System.Security.AccessControl.MutexAccessRule($authenticatedUsersSid,([System.Security.AccessControl.MutexRights]::Synchronize -bor [System.Security.AccessControl.MutexRights]::Modify),[System.Security.AccessControl.AccessControlType]::Allow)
+        $mutexSecurity.AddAccessRule($mutexAccessRule)
+        return New-Object System.Threading.Mutex($false,$MutexName,[ref]$mutexCreatedNew,$mutexSecurity)
+    } catch {
+        try { return [System.Threading.Mutex]::OpenExisting($MutexName) } catch { return $null }
+    }
 }
 
 function Write-CustomLog { param([string]$Message, [switch]$NoPrefix)
     $ts = if (-not $NoPrefix.IsPresent) {Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"} else {$null}
     $line = "$(if(-not $NoPrefix.IsPresent){$ts+' - '})" + "$Message"
+    # The named mutex serializes writers across threads, processes and sessions (backend, drainer runspaces, popup)
+    # An abandoned mutex still grants ownership to the caller, so the exception is treated as a successful acquisition
+    $mutexAcquired = $false
+    $streamWriter = $null
     try {
+        if ($script:LogMutex) { try { $mutexAcquired = $script:LogMutex.WaitOne(3000) } catch [System.Threading.AbandonedMutexException] { $mutexAcquired = $true } }
         $streamWriter = New-Object IO.StreamWriter($script:LogPath, $true, [Text.Encoding]::UTF8)
         $streamWriter.WriteLine($line)
-    } catch {} finally { if ($streamWriter) { $streamWriter.Close() } }
+    } catch {} finally {
+        if ($streamWriter) { $streamWriter.Close() }
+        if ($mutexAcquired) { try { $script:LogMutex.ReleaseMutex() } catch {} }
+    }
     Write-Host $line
 }
 
@@ -248,6 +287,15 @@ function Resolve-LogPath([string]$Title,[string]$CandidateLog) {
     $parentDir = [IO.Path]::GetDirectoryName($path)
     if (-not (Test-Path -LiteralPath $parentDir -PathType Container)) { New-Item -Path $parentDir -Type Directory -Force | Out-Null  }
     return $path
+}
+
+function Open-ProcessKeepAliveHandle([int]$ProcessId) {
+    # Holding an open handle pins the kernel process object : Windows cannot recycle the PID while the handle exists,
+    # so a later TerminateProcess on this handle is guaranteed to hit the exact process observed at detection time
+    try {
+        $accessMask = [Win32Api+ProcessAccessFlags]::PROCESS_TERMINATE -bor [Win32Api+ProcessAccessFlags]::SYNCHRONIZE
+        return [Win32Api]::OpenProcess($accessMask,$false,$ProcessId)
+    } catch { return [IntPtr]::Zero }
 }
 
 
@@ -315,7 +363,7 @@ function Get-SessionContext {
             [WtsApi32]::WTSFreeMemory($sessionsPointer)
         }
     } catch {
-        Write-CustomLog ("WTSEnumerateSessions exception: " + $_.Exception.Message)
+        Write-CustomLog ("WTSEnumerateSessions exception : " + $_.Exception.Message)
         Stop-Script 6
     }
     return $sessionContext
@@ -329,13 +377,13 @@ function Get-RunningProcesses {
     - -ProcessDLL supports "*" wildcard wildcard.
     - -ProcessTitle accepts wildcards ; syntax optionally supports "TitlePattern=ProcessNamePattern" to pre-filter by process name.
     - Aggregate PIDs by executable name for non-title sources; exit 2 if nothing is running.
-    - Critical system processes cause exit 16 if detected.
+    - Title-based targets get a keep-alive process handle to make later PID-based termination immune to PID recycling.
+    - Critical system processes cause exit 16 if detected, except for explicitly named -Process requests which reflect a deliberate operator choice.
 
     Returns detectedProcesses (array of hashtables):
-        @{ Name; ShortName; Description; ExePath; IconBase64; Process_Ids[]; [CloseByPid=$true when source=Title] }
+        @{ Name; ShortName; Description; ExePath; IconBase64; Process_Ids[]; [Process_Handles[]; CloseByPid=$true when source=Title] }
     #>
     param([int32]$SessionId, [string]$pwsh, [string[]]$Processes, [string[]]$ProcessesPaths, [string[]]$ProcessTitles, [string[]]$ProcessDLL )
-
     function Save-IconToBase64Png([System.Drawing.Icon]$Icon) {
         if (-not $Icon) { return $null }
         $bmp = $Icon.ToBitmap()
@@ -345,7 +393,6 @@ function Get-RunningProcesses {
             [Convert]::ToBase64String($ms.ToArray())
         } catch { $null } finally { $ms.Dispose(); $bmp.Dispose() }
     }
-
     # 1) -------------- Normalize the -Process entries (supports wildcards) --------------
     $requestedByLowerName=@{}   # key => meta (for logging/description/source)
     $explicitNamesLower=@{}     # exact names only (to report "not running")
@@ -359,7 +406,8 @@ function Get-RunningProcesses {
         if($executableName -notmatch '\.exe$'){ $executableName+='.exe' }
         $descriptionText=$descriptionText.Trim()
         $lowerPattern=$executableName.ToLowerInvariant()
-        if($lowerPattern -like '*[*]*' -or $lowerPattern -like '*?*'){
+        # The ? wildcard must be escaped as [?] inside the -like test pattern, otherwise *?* matches any non-empty string
+        if($lowerPattern -like '*[*]*' -or $lowerPattern -like '*[?]*'){
             $explicitNamePatterns+=,@{PatternLower=$lowerPattern;Description=$descriptionText}
         }else{
             if(-not $requestedByLowerName.ContainsKey($lowerPattern)){
@@ -368,7 +416,6 @@ function Get-RunningProcesses {
             }
         }
     }
-
     # 2) -------------- Normalize the -ProcessPath entries as wildcard patterns --------------
     $pathPatterns=@()
     $parsedPathArgs=$ProcessesPaths
@@ -382,10 +429,9 @@ function Get-RunningProcesses {
         $pathPatterns+=,@{PatternLower=$norm;RawInput=$rawTrimmed.Trim('"')}
     }
     if($pathPatterns.Count -gt 0){
-        $normForLog=@(); foreach($r in $pathPatterns){ $normForLog+=("PATH:"+$r.PatternLower) }
-        Write-CustomLog ("ProcessPath patterns: " + ($normForLog -join "; "))
+        $normForLog=@(); foreach($r in $pathPatterns){ $normForLog+=("PATH : "+$r.PatternLower) }
+        Write-CustomLog ("ProcessPath patterns : " + ($normForLog -join "; "))
     }
-
     # 3) -------------- Prepare DLL pattern --------------
     $dllPatternInfos=@()
     if($ProcessDLL -and $ProcessDLL.Count -gt 0){
@@ -399,10 +445,9 @@ function Get-RunningProcesses {
         }
         if($dllPatternInfos.Count -gt 0){
             $patternsForLog=($ProcessDLL | Where-Object { $_ } | ForEach-Object { $_.Trim() }) -join ", "
-            Write-CustomLog ("DLL patterns: " + $patternsForLog)
+            Write-CustomLog ("DLL patterns : " + $patternsForLog)
         }
     }
-
     # 4) -------------- Prepare Title queries --------------
     $titleQueries=@()
     if($ProcessTitles -and $ProcessTitles.Count -gt 0){
@@ -418,9 +463,8 @@ function Get-RunningProcesses {
                 $titleQueries+=,@{TitlePatternLower=$arg.Trim().ToLowerInvariant();ProcNamePatternLower=$null}
             }
         }
-        Write-CustomLog ("Title patterns: " + (($titleQueries | ForEach-Object { $_.TitlePatternLower }) -join "; "))
+        Write-CustomLog ("Title patterns : " + (($titleQueries | ForEach-Object { $_.TitlePatternLower }) -join "; "))
     }
-
     # 5) -------------- Enumerate all processes ONCE --------------
     $modulePathSB=New-Object System.Text.StringBuilder 1024
     $procPathSB=New-Object System.Text.StringBuilder 1024
@@ -430,7 +474,7 @@ function Get-RunningProcesses {
     $bytesReturned=0
     $detectedByKey=@{}
     $pidToNameLower=@{}; $pidToNameProper=@{}; $pidToExePath=@{}
-    if(-not [Win32Api]::EnumProcesses($processIds,$processIds.Length*4,[ref]$bytesReturned)){ Write-CustomLog "Failed to enumerate processes"; Stop-Script 2 }
+    if(-not [Win32Api]::EnumProcesses($processIds,$processIds.Length*4,[ref]$bytesReturned)){ Write-CustomLog "Failed to enumerate processes (EnumProcesses API failure). Exiting with code 17."; Stop-Script 17 }
     $processCount=[int]($bytesReturned/4)
     for($processIndex=0;$processIndex -lt $processCount;$processIndex++){
         $processId=$processIds[$processIndex]; if($processId -eq 0){continue}
@@ -443,13 +487,12 @@ function Get-RunningProcesses {
             $len=$procPathSB.Capacity; $processFullPath=$null
             if ([Environment]::OSVersion.Version.Major -ge 6 -and [Win32Api]::QueryFullProcessImageName($processHandle,0,$procPathSB,[ref]$len)) { $processFullPath=$procPathSB.ToString() }
             else{
-                try{ $wmi=Get-WmiObject -Class Win32_Process -Filter "ProcessId=$processId" -ErrorAction Stop; $processFullPath=(if($wmi.ExecutablePath){$wmi.ExecutablePath}else{$wmi.Name}) }catch{}
+                try{ $wmi=Get-WmiObject -Class Win32_Process -Filter "ProcessId=$processId" -ErrorAction Stop; $processFullPath=$(if($wmi.ExecutablePath){$wmi.ExecutablePath}else{$wmi.Name}) }catch{}
             }
             if([string]::IsNullOrEmpty($processFullPath)){continue}
             $processName=[System.IO.Path]::GetFileName($processFullPath)
             $lowerName=$processName.ToLowerInvariant()
             $pidToNameLower[$processId]=$lowerName; $pidToNameProper[$processId]=$processName; $pidToExePath[$processId]=$processFullPath
-
             # Check Explicit exact names first
             $isRelevant=$false; $source='Explicit'; $sourceDet=$null
             if($requestedByLowerName.ContainsKey($lowerName)){
@@ -479,17 +522,17 @@ function Get-RunningProcesses {
                     }
                 }
             }
-
-            # DLL patterns
+            # DLL patterns (EnumProcessModulesEx with LIST_MODULES_ALL also returns the modules of 32-bit WOW64 processes when called from a 64-bit process)
             $matchedDlls=@()
             if($dllPatternInfos.Count -gt 0){
                 $requiredBytes=0
                 $bufferBytes=$moduleHandles.Length*$pointerSize
-                if([Win32Api]::EnumProcessModules($processHandle,$moduleHandles,$bufferBytes,[ref]$requiredBytes)){
+                $listAllModulesFlag=[uint32][Win32Api+ListModulesOptions]::LIST_MODULES_ALL
+                if([Win32Api]::EnumProcessModulesEx($processHandle,$moduleHandles,$bufferBytes,[ref]$requiredBytes,$listAllModulesFlag)){
                     if($requiredBytes -gt $bufferBytes){
                         $moduleHandles=New-Object IntPtr[] ([int][math]::Ceiling($requiredBytes/[double]$pointerSize))
                         $bufferBytes=$moduleHandles.Length*$pointerSize
-                        if(-not [Win32Api]::EnumProcessModules($processHandle,$moduleHandles,$bufferBytes,[ref]$requiredBytes)){ $requiredBytes=0 }
+                        if(-not [Win32Api]::EnumProcessModulesEx($processHandle,$moduleHandles,$bufferBytes,[ref]$requiredBytes,$listAllModulesFlag)){ $requiredBytes=0 }
                     }
                     if($requiredBytes -gt 0){
                         $moduleCount=[int]($requiredBytes/$pointerSize)
@@ -518,7 +561,6 @@ function Get-RunningProcesses {
                     $isRelevant=$true; $source='DLL'; $sourceDet=(($matchedDlls | Select-Object -First 3) -join ", ")
                 }
             }
-
             # Aggregate detected processes (name-based entries)
             if($isRelevant){
                 if(-not $detectedByKey.ContainsKey($lowerName)){
@@ -532,13 +574,12 @@ function Get-RunningProcesses {
             }
         }finally{ if($processHandle -ne [IntPtr]::Zero){[void][Win32Api]::CloseHandle($processHandle)} }
     }
-
     # 6) -------------- Title-based enumeration --------------
     if($titleQueries.Count -gt 0){
         Write-CustomLog "Enumerating windows from user session..."
-        try { $windowEntries = Get-UserSessionWindows -SessionId $targetSessionId -Pwsh $pwsh } 
+        try { $windowEntries = Get-UserSessionWindows -SessionId $SessionId -Pwsh $pwsh } 
         catch {
-            Write-CustomLog ("Get-UserSessionWindows threw: " + $_.Exception.Message)
+            Write-CustomLog ("Get-UserSessionWindows threw : " + $_.Exception.Message)
             $windowEntries = @()
         }
         if(-not $windowEntries){ Write-CustomLog "  Window enumeration returned 0 items." }
@@ -573,13 +614,14 @@ function Get-RunningProcesses {
                 if(-not $detectedByKey.ContainsKey($key)){
                     $shortNameVal = ($processExeName -replace '\.exe$','')
                     $detectedByKey[$key] = @{
-                        Name        = $processExeName
-                        ShortName   = $shortNameVal
-                        Description = $windowTitle
-                        ExePath     = $processPath
-                        IconBase64  = $iconBase64
-                        Process_Ids = @()
-                        CloseByPid  = $true
+                        Name            = $processExeName
+                        ShortName       = $shortNameVal
+                        Description     = $windowTitle
+                        ExePath         = $processPath
+                        IconBase64      = $iconBase64
+                        Process_Ids     = @()
+                        Process_Handles = @()
+                        CloseByPid      = $true
                     }
                     $requestedByLowerName[$key] = @{
                         Name        = $processExeName
@@ -590,10 +632,13 @@ function Get-RunningProcesses {
                     }
                 }
                 ($detectedByKey[$key].Process_Ids) += ,$process_Id
+                # The keep-alive handle must be opened in this backend process because kernel handles are per-process objects
+                $keepAliveHandle = Open-ProcessKeepAliveHandle -ProcessId $process_Id
+                ($detectedByKey[$key].Process_Handles) += ,$keepAliveHandle
+                if($keepAliveHandle -eq [IntPtr]::Zero){ Write-CustomLog ("WARNING : could not open keep-alive handle on PID " + $process_Id + ", termination will fall back to taskkill /PID") }
             }
         }
     }
-
     # 7) -------------- Attach icons for entries still missing them (name/path/dll) --------------
     if($detectedByKey.Count -ge 1){
         Add-Type -AssemblyName System.Drawing
@@ -619,13 +664,12 @@ function Get-RunningProcesses {
             $acc.IconBase64=$iconBase64
         }
     }
-
     # 8) -------------- Check for critical system processes --------------
     # Processes are considered critical if:
     #   - Their name is in the CriticalProcessNames list, OR
     #   - For DLL/Path sources: their executable path is under a protected system directory
+    # Explicitly named -Process requests bypass this check entirely : naming a process is a deliberate operator decision
     $criticalFound = @()
-
     $script:CriticalProcessNames = @(
         # Core Windows kernel and session processes
         'system',
@@ -641,14 +685,12 @@ function Get-RunningProcesses {
         'lsass.exe',
         'lsaiso.exe',
         'lsm.exe',
-        
         # Service hosting
         'svchost.exe',
         'sihost.exe',
         'taskhostw.exe',
         'taskhost.exe',
         'runtimebroker.exe',
-        
         # Desktop and shell
         'dwm.exe',
         'explorer.exe',
@@ -656,11 +698,8 @@ function Get-RunningProcesses {
         'ctfmon.exe',
         'fontdrvhost.exe',
         'dllhost.exe',
-        
         # Audio subsystem
         'audiodg.exe',
-        'audiosrv.dll',
-        
         # Windows Security / Defender
         'msmpeng.exe',
         'msmpsvc.exe',
@@ -672,7 +711,6 @@ function Get-RunningProcesses {
         'sgrmbroker.exe',
         'sensecncproxy.exe',
         'sense.exe',
-        
         # Credential and authentication
         'logonui.exe',
         'userinit.exe',
@@ -680,7 +718,6 @@ function Get-RunningProcesses {
         'credentialuibroker.exe',
         'lockapp.exe',
         'credentialenrollmentmanager.exe',
-        
         # Windows Update and servicing
         'trustedinstaller.exe',
         'tiworker.exe',
@@ -690,22 +727,19 @@ function Get-RunningProcesses {
         'wuauclt.exe',
         'musnotification.exe',
         'musnotificationux.exe',
-        'waaborker.exe',
-        
+        'waasmedicagent.exe',
+        'mousocoreworker.exe',
         # Windows Installer
         'msiexec.exe',
         'msiserver.exe',
-        
         # Print spooler
         'spoolsv.exe',
         'printfilterpipelinesvc.exe',
-        
         # WMI and COM
         'wmiprvse.exe',
         'unsecapp.exe',
         'wmiapsrv.exe',
         'msdtc.exe',
-        
         # Modern UI / UWP shell components
         'applicationframehost.exe',
         'shellexperiencehost.exe',
@@ -724,12 +758,10 @@ function Get-RunningProcesses {
         'gamebarpresencewriter.exe',
         'gamebar.exe',
         'gamebarftserver.exe',
-        
         # Background and scheduled tasks
         'backgroundtaskhost.exe',
         'backgroundtransferhost.exe',
         'taskhostex.exe',
-        
         # Device and hardware
         'dashost.exe',
         'devicecensus.exe',
@@ -737,10 +769,8 @@ function Get-RunningProcesses {
         'wudfhost.exe',
         'driverhost.exe',
         'umdfhost.exe',
-        
         # Network and connectivity
         'smphost.exe',
-        'lsm.exe',
         'netman.exe',
         'nlasvc.exe',
         'dns.exe',
@@ -748,7 +778,6 @@ function Get-RunningProcesses {
         'iphlpsvc.exe',
         'ncsi.exe',
         'nsi.exe',
-        
         # Remote Desktop
         'rdpclip.exe',
         'rdpinput.exe',
@@ -756,16 +785,13 @@ function Get-RunningProcesses {
         'rdpshell.exe',
         'tstheme.exe',
         'rdpdr.exe',
-        
         # Error reporting
         'werfault.exe',
         'werfaultsecure.exe',
         'wermgr.exe',
-        
         # Compatibility and telemetry
         'compattelrunner.exe',
         'microsoftedgeupdate.exe',
-        
         # Hyper-V and virtualization
         'vmwp.exe',
         'vmms.exe',
@@ -774,72 +800,54 @@ function Get-RunningProcesses {
         'vmconnect.exe',
         'hvix64.exe',
         'hvax64.exe',
-        
         # Windows Subsystem for Linux
         'wsl.exe',
         'wslhost.exe',
         'wslservice.exe',
-        
         # Cryptographic services
         'cng.exe',
-        'cryptsvc.dll',
-        
         # Event logging
         'eventlog.exe',
-        
         # Power management
         'powercfg.exe',
-        
         # Windows Time
         'w32time.exe',
-        
         # Group Policy
         'gpupdate.exe',
         'gpsvc.exe',
-        
         # Tablet / Touch input
         'tabletinputservice.exe',
         'tabtip.exe',
         'inputpersonalization.exe',
-        
         # Accessibility
         'atbroker.exe',
         'narrator.exe',
         'magnify.exe',
         'osk.exe',
         'utilman.exe',
-        
         # Windows Firewall
         'mpssvc.exe',
         'bfe.exe',
-        
         # Storage and disk
         'vds.exe',
         'vdsldr.exe',
         'defrag.exe',
         'disksnapshot.exe',
-        
         # Clipboard
         'clipboardserver.exe',
-        
         # Windows Store / AppX
         'wsservice.exe',
         'clipup.exe',
         'appxsvc.exe',
         'licensingdiag.exe',
-        
         # Speech
         'speechruntime.exe',
-        
         # Location
         'lfsvc.exe',
-        
         # Biometrics
         'wbiosrvc.exe',
-        
         # Fonts
         'fntcache.exe',
-        
         # Graphics drivers (common)
         'igfxem.exe',
         'igfxcuiservice.exe',
@@ -854,25 +862,17 @@ function Get-RunningProcesses {
         'amdow.exe',
         'amddvr.exe',
         'radeonsoft.exe',
-        
         # Intel services
         'intelcphecisvca.exe',
         'intelcphecisvc.exe',
         'jhi_service.exe',
-        
         # Common system tray and services
-        'securityhealthsystray.exe',
         'iastordatamgrsvc.exe',
-        
-        # Antimalware Scan Interface
-        'amsi.dll',
-        
         # Windows Management Instrumentation
-        'scrcons.exe',
-        'wbemcore.dll'
+        'scrcons.exe'
     )
-    
     # System directories where processes should not be terminated when detected via DLL or Path
+    # ProgramFiles(x86) does not exist on 32-bit systems and Join-Path throws on a null Path argument
     $script:ProtectedSystemPaths = @(
         $env:SystemRoot,
         (Join-Path $env:SystemRoot "System32"),
@@ -881,20 +881,19 @@ function Get-RunningProcesses {
         (Join-Path $env:SystemRoot "WinSxS"),
         (Join-Path $env:ProgramData "Microsoft\Windows Defender"),
         (Join-Path ${env:ProgramFiles} "Windows Defender"),
-        (Join-Path ${env:ProgramFiles(x86)} "Windows Defender"),
+        $(if(${env:ProgramFiles(x86)}){ Join-Path ${env:ProgramFiles(x86)} "Windows Defender" }),
         (Join-Path ${env:ProgramFiles} "Windows Security"),
         (Join-Path ${env:ProgramFiles} "WindowsApps")
     ) | Where-Object { $_ -and (Test-Path $_ -ErrorAction SilentlyContinue) } | ForEach-Object { $_.ToLowerInvariant().TrimEnd('\') }
-
     foreach ($k in $detectedByKey.Keys) {
         $entry = $detectedByKey[$k]
         $procNameLower = $entry.Name.ToLowerInvariant()
         $meta = $requestedByLowerName[$k]
         $src = if ($meta -and $meta.Source) { $meta.Source } else { 'Unknown' }
-        
+        # Explicitly named processes are exempt from the critical list because the operator asked for them by name on purpose
+        if ($src -eq 'Explicit') { continue }
         $isCritical = $false
         $reason = ""
-        
         # Check 1: Process name is in the critical processes list
         if ($script:CriticalProcessNames -contains $procNameLower) {
             $isCritical = $true
@@ -918,7 +917,6 @@ function Get-RunningProcesses {
                 }
             }
         }
-        
         if ($isCritical) {
             $criticalFound += ,@{
                 Name = $entry.Name
@@ -930,13 +928,12 @@ function Get-RunningProcesses {
             }
         }
     }
-    
     if ($criticalFound.Count -gt 0) {
         Write-CustomLog "===================================================================="
-        Write-CustomLog "CRITICAL ERROR: System-essential processes detected - CANNOT PROCEED"
+        Write-CustomLog "CRITICAL ERROR : System-essential processes detected - CANNOT PROCEED"
         Write-CustomLog "===================================================================="
         Write-CustomLog ""
-        Write-CustomLog "The following processes were matched but cannot be terminated:"
+        Write-CustomLog "The following processes were matched but cannot be terminated :"
         Write-CustomLog ""
         foreach ($crit in $criticalFound) {
             Write-CustomLog ("  Process  : {0}" -f $crit.Name)
@@ -952,16 +949,16 @@ function Get-RunningProcesses {
             Write-CustomLog "  ---"
         }
         Write-CustomLog ""
-        Write-CustomLog "RECOMMENDATION:"
-        Write-CustomLog "  - If using -ProcessDLL: Ensure the DLL is not a common system library."
+        Write-CustomLog "RECOMMENDATION :"
+        Write-CustomLog "  - If using -ProcessDLL : Ensure the DLL is not a common system library."
         Write-CustomLog "    Avoid broad patterns that match Windows components."
-        Write-CustomLog "  - If using -ProcessPath: Exclude system directories like C:\Windows\*"
+        Write-CustomLog "  - If using -ProcessPath : Exclude system directories like C:\Windows\*"
         Write-CustomLog "    Target only your application's installation directory."
+        Write-CustomLog "  - Explicitly named -Process arguments are exempt from this check."
         Write-CustomLog ""
-        Write-CustomLog "Aborting to prevent system instability. Exit code: 16"
+        Write-CustomLog "Aborting to prevent system instability. Exit code : 16"
         Stop-Script 16
     }
-
     # 9) -------------- Logging & return --------------
     $detectedProcesses=@(); foreach($k in $detectedByKey.Keys){ $detectedProcesses+=,$detectedByKey[$k] }
     $runningForLog=@()
@@ -970,13 +967,13 @@ function Get-RunningProcesses {
         $src=if($meta -and $meta.Source){ $meta.Source.ToUpper() }else{ 'EXPLICIT' }
         $pidsDisplay=($entry.Process_Ids) -join ","
         if($meta -and $meta.Source -eq 'Path'){
-            $runningForLog+=(" -> [{0}] {1}`n     Match: {2}`n     PIDs: {3}" -f $src,$entry.Name,$entry.ExePath,$pidsDisplay)
+            $runningForLog+=(" -> [{0}] {1}`n     Match : {2}`n     PIDs : {3}" -f $src,$entry.Name,$entry.ExePath,$pidsDisplay)
         }elseif($meta -and $meta.Source -eq 'DLL'){
-            $runningForLog+=(" -> [{0}] {1}`n     DLL: {2}`n     Process: {3}`n     PIDs: {4}" -f $src,$entry.Name,$meta.SourceDetail,$entry.ExePath,$pidsDisplay)
+            $runningForLog+=(" -> [{0}] {1}`n     DLL : {2}`n     Process : {3}`n     PIDs : {4}" -f $src,$entry.Name,$meta.SourceDetail,$entry.ExePath,$pidsDisplay)
         }elseif($meta -and $meta.Source -eq 'Title'){
-            $runningForLog+=(" -> [{0}] {1}`n     Title: {2}`n     Process: {3}`n     PIDs: {4}" -f $src,$entry.Name,$entry.Description,$entry.ExePath,$pidsDisplay)
+            $runningForLog+=(" -> [{0}] {1}`n     Title : {2}`n     Process : {3}`n     PIDs : {4}" -f $src,$entry.Name,$entry.Description,$entry.ExePath,$pidsDisplay)
         }else{
-            $runningForLog+=(" -> [{0}] {1}`n     Source: {2}`n     PIDs: {3}" -f $src,$entry.Name,$entry.ExePath,$pidsDisplay)
+            $runningForLog+=(" -> [{0}] {1}`n     Source : {2}`n     PIDs : {3}" -f $src,$entry.Name,$entry.ExePath,$pidsDisplay)
         }
     }
     $missingExplicitNames=@()
@@ -985,14 +982,14 @@ function Get-RunningProcesses {
             $missingExplicitNames+=$requestedByLowerName[$lowerKey].Name
         }
     }
-    Write-CustomLog ("Items built: count=" + $detectedProcesses.Count)
+    Write-CustomLog ("Items built : count=" + $detectedProcesses.Count)
     if($runningForLog.Count -gt 0){
-        Write-CustomLog (" Running found:") -NoPrefix
+        Write-CustomLog (" Running found :") -NoPrefix
         foreach($line in $runningForLog){ Write-CustomLog "$line`n------" -NoPrefix }
     }
     if($missingExplicitNames.Count -gt 0){
         $missingDisplay=($missingExplicitNames | Sort-Object -Unique) -join ", "
-        Write-CustomLog (" Not running: " + $missingDisplay) -NoPrefix
+        Write-CustomLog (" Not running : " + $missingDisplay) -NoPrefix
     }
     if($detectedProcesses.Count -eq 0){ Write-CustomLog "No requested processes are currently running. Exiting with code 2."; Stop-Script 2 }
     return ,$detectedProcesses
@@ -1023,7 +1020,7 @@ if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
         [Threading.Thread]::CurrentThread.TrySetApartmentState([Threading.ApartmentState]::STA) | Out-Null
         Write-HelperLog "Forced ApartmentState=STA"
     } catch {
-        Write-HelperLog ("Failed to set STA: " + `$_.Exception.Message)
+        Write-HelperLog ("Failed to set STA : " + `$_.Exception.Message)
     }
 }
 
@@ -1120,10 +1117,10 @@ public static System.Drawing.Bitmap GetIconFromAumid(string aumid,int size){
 }
 catch{
     `$script:ShellInteropReady = `$false
-    Write-HelperLog ("Add-Type(ShellInterop) FAILED: " + `$_.Exception.ToString())
+    Write-HelperLog ("Add-Type(ShellInterop) FAILED : " + `$_.Exception.ToString())
 }
 
-function Sanitize([string]`$text){ if(-not `$text){return ""}; (`$text -replace "[`t`r`n]"," ") }
+function Format-TsvText([string]`$text){ if(-not `$text){return ""}; (`$text -replace "[`t`r`n]"," ") }
 
 function Get-ExePath([int]`$processId){
     try{
@@ -1163,24 +1160,24 @@ function Get-AumidFromWindowsAppsPath([string]`$exePath){
             `$packageRoot = Split-Path -Parent `$packageRoot
         }
         `$manifestPath = Join-Path `$packageRoot "AppxManifest.xml"
-        if(-not (Test-Path `$manifestPath)){ Write-HelperLog "Get-Aumid: no manifest"; return `$null }
+        if(-not (Test-Path `$manifestPath)){ Write-HelperLog "Get-Aumid : no manifest"; return `$null }
         `$leafFolder = Split-Path -Leaf `$packageRoot
         `$regexMatch = [regex]::Match(`$leafFolder,'^(?<name>[^_]+)_[^_]+_[^_]+__?(?<pubid>[^\\]+)`$')
-        if(-not `$regexMatch.Success){ Write-HelperLog ("Get-Aumid: regex miss on '{0}'" -f `$leafFolder); return `$null }
+        if(-not `$regexMatch.Success){ Write-HelperLog ("Get-Aumid : regex miss on '{0}'" -f `$leafFolder); return `$null }
         `$packageFamily = `$regexMatch.Groups['name'].Value + "_" + `$regexMatch.Groups['pubid'].Value
         [xml]`$manifestXml = Get-Content -LiteralPath `$manifestPath -Encoding UTF8
         `$applicationNode = `$manifestXml.Package.Applications.Application
-        if(-not `$applicationNode){ Write-HelperLog "Get-Aumid: no <Application>"; return `$null }
+        if(-not `$applicationNode){ Write-HelperLog "Get-Aumid : no <Application>"; return `$null }
         `$appId = [string]`$applicationNode.Id
-        if(-not `$appId){ Write-HelperLog "Get-Aumid: empty AppId"; return `$null }
+        if(-not `$appId){ Write-HelperLog "Get-Aumid : empty AppId"; return `$null }
         `$packageFamily + "!" + `$appId
     }catch{
-        Write-HelperLog ("Get-Aumid EX: " + `$_.Exception.Message)
+        Write-HelperLog ("Get-Aumid EX : " + `$_.Exception.Message)
         `$null
     }
 }
 
-function Bitmap-ToBase64Png([System.Drawing.Bitmap]`$bitmap){
+function Convert-BitmapToBase64Png([System.Drawing.Bitmap]`$bitmap){
     if(-not `$bitmap){ return "" }
     `$memStream = New-Object System.IO.MemoryStream
     try{
@@ -1192,34 +1189,32 @@ function Bitmap-ToBase64Png([System.Drawing.Bitmap]`$bitmap){
     }
 }
 
-function Get-IconBitmap-FromHwnd([IntPtr]`$hWnd,[string]`$exePath,[int]`$reqSize=96){
+function Get-IconBitmapFromHwnd([IntPtr]`$hWnd,[string]`$exePath,[int]`$reqSize=96){
 <#
 Priority:
   1) AUMID from WindowsApps path → ShellInterop.GetIconFromAumid
   2) ExtractAssociatedIcon(exePath)
 Fallback: SystemIcons.Application.
 #>
-    function _Try([scriptblock]`$sb,[string]`$tag){
-        try{& `$sb}catch{Write-HelperLog "[`$tag] EX: `$(`$_.Exception.Message)";`$null}
+    function Invoke-SafeStep([scriptblock]`$sb,[string]`$tag){
+        try{& `$sb}catch{Write-HelperLog "[`$tag] EX : `$(`$_.Exception.Message)";`$null}
     }
     if(`$script:ShellInteropReady){
         if(`$exePath -and `$exePath -like "*\WindowsApps\*"){
-            `$aumidFromPath=_Try { Get-AumidFromWindowsAppsPath `$exePath } 'AUMID.FromPath'
+            `$aumidFromPath=Invoke-SafeStep { Get-AumidFromWindowsAppsPath `$exePath } 'AUMID.FromPath'
             if(`$aumidFromPath){
-                `$iconBitmap=_Try { [ShellInterop]::GetIconFromAumid(`$aumidFromPath,`$reqSize) } 'ShellInterop.GetIconFromAumid(Path)'
+                `$iconBitmap=Invoke-SafeStep { [ShellInterop]::GetIconFromAumid(`$aumidFromPath,`$reqSize) } 'ShellInterop.GetIconFromAumid(Path)'
                 if(`$iconBitmap){ Write-HelperLog "[AUMID(Path)] OK"; return `$iconBitmap } else { Write-HelperLog "[AUMID(Path)] NULL" }
             } else { Write-HelperLog "[AUMID(Path)] NotFound" }
         }
     } else { Write-HelperLog "[ShellInterop] NotAvailable" }
-
     if(`$exePath){
-        `$iconObj=_Try { [System.Drawing.Icon]::ExtractAssociatedIcon(`$exePath) } 'ExtractAssociatedIcon'
+        `$iconObj=Invoke-SafeStep { [System.Drawing.Icon]::ExtractAssociatedIcon(`$exePath) } 'ExtractAssociatedIcon'
         if(`$iconObj){
-            `$bitmap=_Try { `$iconObj.ToBitmap() } 'Icon.ToBitmap'
+            `$bitmap=Invoke-SafeStep { `$iconObj.ToBitmap() } 'Icon.ToBitmap'
             if(`$bitmap){ Write-HelperLog "[ExtractAssociatedIcon] OK"; return `$bitmap } else { Write-HelperLog "[ExtractAssociatedIcon] NULL.Bmp" }
         } else { Write-HelperLog "[ExtractAssociatedIcon] NULL.Icon" }
     } else { Write-HelperLog "[ExtractAssociatedIcon] No exePath" }
-
     Write-HelperLog "[Fallback] SystemIcons.Application"
     [System.Drawing.SystemIcons]::Application.ToBitmap()
 }
@@ -1233,7 +1228,7 @@ Fallback: SystemIcons.Application.
     `$titleBuilder=New-Object System.Text.StringBuilder (`$titleLength+1)
     if([Win32Api2]::GetWindowText(`$windowHandle,`$titleBuilder,`$titleBuilder.Capacity) -eq 0){ return `$true }
     `$title=`$titleBuilder.ToString()
-    if(-not `$title -or `$title -match '^\s*`$'){ return `$true }   # remplace IsNullOrWhiteSpace
+    if(-not `$title -or `$title -match '^\s*`$'){ return `$true }
     `$null = `$windowList.Add(@{ H=`$windowHandle; Title=`$title })
     return `$true
 }, [IntPtr]::Zero) | Out-Null
@@ -1244,11 +1239,9 @@ foreach(`$win in `$windowList){
     `$processId = 0; [void][Win32Api2]::GetWindowThreadProcessId(`$win.H,[ref]`$processId)
     `$exePath = Get-ExePath `$processId
     Write-HelperLog ("Window '{0}' PID={1} Path={2}" -f `$win.Title, `$processId, (`$(if (`$exePath) { `$exePath } else { "<null>" })))
-
-    `$iconBitmap = Get-IconBitmap-FromHwnd `$win.H `$exePath 32
-    `$iconBase64 = Bitmap-ToBase64Png `$iconBitmap
+    `$iconBitmap = Get-IconBitmapFromHwnd `$win.H `$exePath 32
+    `$iconBase64 = Convert-BitmapToBase64Png `$iconBitmap
     if(`$iconBase64.Length -gt 0){ Write-HelperLog (" -> Icon Base64 length=" + `$iconBase64.Length) } else { Write-HelperLog " -> Icon Base64 EMPTY" }
-
     `$processNameOut=""
     try{
         if(`$processId -gt 0){
@@ -1256,13 +1249,11 @@ foreach(`$win in `$windowList){
             if(`$proc){ `$processNameOut = (`$proc.ProcessName + ".exe") }
         }
     }catch{}
-
     `$pidOut   = [string]`$processId
-    `$titleOut = (Sanitize `$win.Title)
-    `$pathOut  = (Sanitize `$exePath)
-    `$nameOut  = (Sanitize `$processNameOut)
+    `$titleOut = (Format-TsvText `$win.Title)
+    `$pathOut  = (Format-TsvText `$exePath)
+    `$nameOut  = (Format-TsvText `$processNameOut)
     `$iconOut  = if(`$iconBase64){ (`$iconBase64 -replace "`r|`n","") } else { "" }
-
     [Console]::Out.WriteLine(`$pidOut + "`t" + `$titleOut + "`t" + `$pathOut + "`t" + `$nameOut + "`t" + `$iconOut)
 }
 
@@ -1274,7 +1265,7 @@ Write-HelperLog "=== Helper end ==="
     try {
         if ($isSystemAccount) { $spawnResult = Start-FromSystemAsCurrentUser -SessionId $SessionId -Pwsh $Pwsh -Script $helper_UserSessionWindows -ShowWindow:$Test.IsPresent -TimeoutSeconds 60} 
         else                  { $spawnResult = Start-FromCurrentUserStdin -Script $helper_UserSessionWindows}
-    } catch { Write-CustomLog (($(if($isSystemAccount){"Start-FromSystemAsCurrentUser"}else{"Start-FromCurrentUserStdin"})) + " threw: " + $_.Exception.Message) }
+    } catch { Write-CustomLog (($(if($isSystemAccount){"Start-FromSystemAsCurrentUser"}else{"Start-FromCurrentUserStdin"})) + " threw : " + $_.Exception.Message) }
     if(-not $spawnResult){
         Write-CustomLog "No Window-Title result from helper."
         return @()
@@ -1285,11 +1276,11 @@ Write-HelperLog "=== Helper end ==="
     Write-CustomLog ("Helper exited. Success=" + $succVal + " ExitCode=" + $exitVal + " PID=" + $pidVal)
     # Get STDOUT
     $stdoutRaw = $spawnResult.Stdout
-    if (-not $stdoutRaw -and $spawnResult.Output) { $stdoutRaw = $spawnResult.Output }  # compat éventuelle
+    if (-not $stdoutRaw -and $spawnResult.Output) { $stdoutRaw = $spawnResult.Output }
     if ($stdoutRaw -is [string]) { $stdoutRaw = @($stdoutRaw -split "`r?`n") }
     $lineCount = 0
     if($stdoutRaw){ $lineCount = $stdoutRaw.Count }
-    Write-CustomLog ("STDOUT lines: " + $lineCount)
+    Write-CustomLog ("STDOUT lines : " + $lineCount)
     if(-not $stdoutRaw -and -not $isSystemAccount){
         Write-CustomLog "[WARN] No stdout captured from Start-FromCurrentUserStdin. Ensure it redirects and returns Stdout."
     }
@@ -1300,7 +1291,7 @@ Write-HelperLog "=== Helper end ==="
             if($l -and ($l -match "`t")){ $stdoutLines+=,$l } else { $nonTsv = $nonTsv + 1 }
         }
     }
-    if($nonTsv -gt 0){ Write-CustomLog ("Non-TSV lines ignored: " + $nonTsv) }
+    if($nonTsv -gt 0){ Write-CustomLog ("Non-TSV lines ignored : " + $nonTsv) }
     # --- Title normalization (outside helper) ---
     function Convert-FuzzyTitle {
         param(
@@ -1338,7 +1329,6 @@ Write-HelperLog "=== Helper end ==="
             $titleChosen = if([string]::IsNullOrEmpty($altColl)) {
                 if([string]::IsNullOrEmpty($altKeep)) { $windowTitle } else { $altKeep }
             } else { $altColl }
-
             if($titleChosen -ne $windowTitle){
                 Write-CustomLog ("Title chosen (normalized) : '{0}' => '{1}'" -f $windowTitle,$titleChosen)
             }
@@ -1350,12 +1340,12 @@ Write-HelperLog "=== Helper end ==="
                 IconBase64= $iconBase64
             }
         } else {
-            Write-CustomLog ("TSV parse failed for line: " + $stdoutLine)
+            Write-CustomLog ("TSV parse failed for line : " + $stdoutLine)
         }
     }
     $parsedCount = 0
     if($parsedList){ $parsedCount = $parsedList.Count }
-    Write-CustomLog ("Parsed windows: " + $parsedCount)
+    Write-CustomLog ("Parsed windows : " + $parsedCount)
     return ,$parsedList
 }
 
@@ -1375,12 +1365,12 @@ function Start-FromCurrentUserStdin {
         [Parameter(Mandatory=$true)][string]$Script,
         [Parameter(Mandatory=$false)][object[]]$Arguments=@()
     )
-    Write-CustomLog ("Start-FromCurrentUserStdin(in-proc): compiling script; args count={0}" -f $Arguments.Count)
+    Write-CustomLog ("Start-FromCurrentUserStdin(in-proc) : compiling script; args count={0}" -f $Arguments.Count)
     $sb=$null
     try   { $sb=[ScriptBlock]::Create($Script) }
     catch {
-        Write-CustomLog ("Start-FromCurrentUserStdin: compile error: " + $_.Exception.Message)
-        return @{ Success=$false; ExitCode=2; Process_Id=$PID; Error=("Script compile error: " + $_.Exception.Message); Stdout=@(); Stderr=@() }
+        Write-CustomLog ("Start-FromCurrentUserStdin : compile error : " + $_.Exception.Message)
+        return @{ Success=$false; ExitCode=2; Process_Id=$PID; Error=("Script compile error : " + $_.Exception.Message); Stdout=@(); Stderr=@() }
     }
     # Capture Console.Out during execution (helper writes TSV via [Console]::Out)
     $oldOut=[Console]::Out
@@ -1394,7 +1384,7 @@ function Start-FromCurrentUserStdin {
         & $sb @Arguments | Out-Null
         $stdoutText=$sw.ToString()
         $stdoutLines=@(); if($stdoutText){ $stdoutLines=@($stdoutText -split "`r?`n") }
-        Write-CustomLog ("Start-FromCurrentUserStdin: success, stdout lines=" + $stdoutLines.Count)
+        Write-CustomLog ("Start-FromCurrentUserStdin : success, stdout lines=" + $stdoutLines.Count)
         return @{ Success=$true; ExitCode=0; Process_Id=$PID; Error=$null; Stdout=$stdoutLines; Stderr=@() }
     }catch{
         # Gather what was written before failure + location info
@@ -1403,8 +1393,8 @@ function Start-FromCurrentUserStdin {
         $msg=$_.Exception.Message
         $pos=$_.InvocationInfo | ForEach-Object { $_.PositionMessage }
         if($pos){ $stderrBuf.Add($pos) | Out-Null }
-        Write-CustomLog ("Start-FromCurrentUserStdin: runtime error: " + $msg)
-        return @{ Success=$false; ExitCode=1; Process_Id=$PID; Error=("Runtime error: " + $msg); Stdout=$stdoutLines; Stderr=@($stderrBuf.ToArray()) }
+        Write-CustomLog ("Start-FromCurrentUserStdin : runtime error : " + $msg)
+        return @{ Success=$false; ExitCode=1; Process_Id=$PID; Error=("Runtime error : " + $msg); Stdout=$stdoutLines; Stderr=@($stderrBuf.ToArray()) }
     }finally{
         try{ [Console]::SetOut($oldOut) }catch{}
         try{ $sw.Dispose() }catch{}
@@ -1415,7 +1405,7 @@ function Start-FromCurrentUserStdin {
 function Start-FromSystemAsCurrentUser {
     <#
       Launch PowerShell in the interactive user's session (SYSTEM caller), feed our script via STDIN,
-      and drain child's STDOUT/STDERR line-by-line here (no external Initialize-ReadSTD).
+      and drain child's STDOUT/STDERR line-by-line here.
       Returns: @{ Success=[bool]; ExitCode=[int]; Process_Id=[int|null]; Error=[string|null]; Stdout=[string[]]; Stderr=[string[]] }
     #>
     param(
@@ -1442,7 +1432,7 @@ function Start-FromSystemAsCurrentUser {
             return $true
         } finally { if($processTokenHandle -ne [IntPtr]::Zero){[Win32Api]::CloseHandle($processTokenHandle)|Out-Null} }
     }
-    Write-CustomLog ("Start-FromSystemAsCurrentUser: SessionId={0} Pwsh='{1}' ShowWindow={2} Timeout={3}s WorkingDir='{4}'" -f $SessionId,$pwsh,[bool]$ShowWindow,$TimeoutSeconds,$WorkingDir)
+    Write-CustomLog ("Start-FromSystemAsCurrentUser : SessionId={0} Pwsh='{1}' ShowWindow={2} Timeout={3}s WorkingDir='{4}'" -f $SessionId,$pwsh,[bool]$ShowWindow,$TimeoutSeconds,$WorkingDir)
     # Encode the script for a robust stdin bootstrap (same as non-SYSTEM path).
     if ($PSVersionTable.PSVersion.Major -ge 5) {
         $commandLine  = '[Console]::InputEncoding=[Text.Encoding]::UTF8; $sb=[ScriptBlock]::Create([Console]::In.ReadToEnd()); & $sb'
@@ -1465,13 +1455,13 @@ function Start-FromSystemAsCurrentUser {
     # Obtain a primary token for the interactive session.
     $userTokenHandle=[IntPtr]::Zero; $primaryTokenHandle=[IntPtr]::Zero
     if(-not [WtsApi32]::WTSQueryUserToken($SessionId,[ref]$userTokenHandle)){
-        Write-CustomLog "Start-FromSystemAsCurrentUser: WTSQueryUserToken failed"
+        Write-CustomLog "Start-FromSystemAsCurrentUser : WTSQueryUserToken failed"
         return @{ Success=$false; ExitCode=7; Process_Id=$null; Error="WTSQueryUserToken failed (SessionId=$SessionId)"; Stdout=@(); Stderr=@() }
     }
     $TOKEN_ALL_ACCESS=0xF01FF; $SECURITY_IMPERSONATION=2; $TOKEN_TYPE_PRIMARY=1
     if(-not [AdvApi32]::DuplicateTokenEx($userTokenHandle,$TOKEN_ALL_ACCESS,[IntPtr]::Zero,$SECURITY_IMPERSONATION,$TOKEN_TYPE_PRIMARY,[ref]$primaryTokenHandle)){
         [Win32Api]::CloseHandle($userTokenHandle)|Out-Null
-        Write-CustomLog "Start-FromSystemAsCurrentUser: DuplicateTokenEx failed"
+        Write-CustomLog "Start-FromSystemAsCurrentUser : DuplicateTokenEx failed"
         return @{ Success=$false; ExitCode=8; Process_Id=$null; Error="DuplicateTokenEx failed"; Stdout=@(); Stderr=@() }
     }
     # Create three anonymous pipes for child's STDIN/STDOUT/STDERR.
@@ -1515,10 +1505,10 @@ function Start-FromSystemAsCurrentUser {
     $creationFlags = ($(if($ShowWindow){$CREATE_NEW_CONSOLE}else{$CREATE_NO_WINDOW})) -bor $CREATE_BREAKAWAY_FROM_JOB
     # Launch PowerShell in the target session using the primary token.
     $processInformation=New-Object PROCESS_INFORMATION
-    Write-CustomLog ("Start-FromSystemAsCurrentUser: launching '{0}' with args='{1}'" -f $pwsh,$argumentLine)
+    Write-CustomLog ("Start-FromSystemAsCurrentUser : launching '{0}' with args='{1}'" -f $pwsh,$argumentLine)
     if(-not [AdvApi32]::CreateProcessAsUser($primaryTokenHandle,$pwsh,$argumentLine,[IntPtr]::Zero,[IntPtr]::Zero,$true,$creationFlags,[IntPtr]::Zero,$WorkingDir,[ref]$startupInfo,[ref]$processInformation)){
         $lastError=[Runtime.InteropServices.Marshal]::GetLastWin32Error()
-        Write-CustomLog ("Start-FromSystemAsCurrentUser: CreateProcessAsUser failed {0}" -f $lastError)
+        Write-CustomLog ("Start-FromSystemAsCurrentUser : CreateProcessAsUser failed {0}" -f $lastError)
         foreach($h in $stderrReadHandle,$stderrWriteHandle,$stdoutReadHandle,$stdoutWriteHandle,$stdinReadHandle,$stdinWriteHandle,$primaryTokenHandle,$userTokenHandle){ if($h -ne [IntPtr]::Zero){try{[Win32Api]::CloseHandle($h)|Out-Null}catch{}} }
         return @{ Success=$false; ExitCode=4; Process_Id=$null; Error=("CreateProcessAsUser failed (error="+$lastError+")"); Stdout=@(); Stderr=@() }
     }
@@ -1529,7 +1519,7 @@ function Start-FromSystemAsCurrentUser {
     if($stderrWriteHandle -ne [IntPtr]::Zero){[Win32Api]::CloseHandle($stderrWriteHandle)|Out-Null; $stderrWriteHandle=[IntPtr]::Zero}
     $childProcessHandle=$processInformation.hProcess
     $childProcessId=$processInformation.dwProcessId
-    Write-CustomLog ("Start-FromSystemAsCurrentUser: child PID={0}" -f $childProcessId)
+    Write-CustomLog ("Start-FromSystemAsCurrentUser : child PID={0}" -f $childProcessId)
     # Wrap our read ends into FileStreams (async=false; we do our own buffering).
     $stdoutSafeReadHandle=New-Object Microsoft.Win32.SafeHandles.SafeFileHandle($stdoutReadHandle,$false)
     $stderrSafeReadHandle=New-Object Microsoft.Win32.SafeHandles.SafeFileHandle($stderrReadHandle,$false)
@@ -1548,45 +1538,63 @@ function Start-FromSystemAsCurrentUser {
             $runspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace(); $runspace.Open()
             $runspace.SessionStateProxy.SetVariable('FS',$FileStream)
             $runspace.SessionStateProxy.SetVariable('Lines',$lines)
-            $runspace.SessionStateProxy.SetVariable('Tag',("{0}{1}" -f $TagPrefix,$ChildPid))
+            $runspace.SessionStateProxy.SetVariable('Tag',("PID{0}-{1}" -f $ChildPid,$TagPrefix))
             $runspace.SessionStateProxy.SetVariable('LogEveryN',200)
+            $runspace.SessionStateProxy.SetVariable('LogPath',$script:LogPath)
+            $runspace.SessionStateProxy.SetVariable('LogMutex',$script:LogMutex)
             $ps = [System.Management.Automation.PowerShell]::Create(); $ps.Runspace=$runspace
             [void]$ps.AddScript({
-                try{ Write-CustomLog ("[Reader:{0}] Starting." -f $Tag) }catch{}
-                $sr=$null; $count=0; $tick=[Environment]::TickCount
+                # A fresh runspace does not inherit functions from the caller scope, so a minimal file logger is defined locally
+                # The shared named mutex serializes writes against the main thread and the popup process
+                # An abandoned mutex still grants ownership to the caller, so the exception is treated as a successful acquisition
+                function Write-ReaderLog([string]$Message){
+                    $timestamp=Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
+                    $mutexAcquired=$false
+                    $streamWriter=$null
+                    try{
+                        if($LogMutex){ try{ $mutexAcquired=$LogMutex.WaitOne(3000) }catch [System.Threading.AbandonedMutexException]{ $mutexAcquired=$true } }
+                        $streamWriter=New-Object IO.StreamWriter($LogPath,$true,[Text.Encoding]::UTF8)
+                        $streamWriter.WriteLine("$timestamp - $Message")
+                    }catch{}finally{
+                        if($streamWriter){ $streamWriter.Close() }
+                        if($mutexAcquired){ try{ $LogMutex.ReleaseMutex() }catch{} }
+                    }
+                }
+                Write-ReaderLog ("[Reader {0}] Starting." -f $Tag)
+                $streamReader=$null; $drainedLineCount=0; $startTickCount=[Environment]::TickCount
                 try{
-                    $sr=New-Object System.IO.StreamReader($FS,(New-Object System.Text.UTF8Encoding($false)),$true,4096)
-                    $line=$null
-                    while($null -ne ($line=$sr.ReadLine())){
-                        [void]$Lines.Add($line); $count++
-                        if(($count%$LogEveryN)-eq 0){
-                            try{Write-CustomLog ("[Reader:{0}] Drained {1} lines (elapsed {2} ms)" -f $Tag,$count,([Environment]::TickCount-$tick))}catch{}
+                    $streamReader=New-Object System.IO.StreamReader($FS,(New-Object System.Text.UTF8Encoding($false)),$true,4096)
+                    $currentLine=$null
+                    while($null -ne ($currentLine=$streamReader.ReadLine())){
+                        [void]$Lines.Add($currentLine); $drainedLineCount++
+                        if(($drainedLineCount%$LogEveryN)-eq 0){
+                            Write-ReaderLog ("[Reader {0}] Drained {1} lines (elapsed {2} ms)" -f $Tag,$drainedLineCount,([Environment]::TickCount-$startTickCount))
                         }
                     }
-                    $rem=$sr.ReadToEnd(); if($rem){ [void]$Lines.Add($rem); $count++ }
-                    try{ Write-CustomLog ("[Reader:{0}] EOF. TotalLines={1}" -f $Tag,$count) }catch{}
-                } catch { try{ Write-CustomLog ("[Reader:{0}] Loop failed: {1}" -f $Tag,$_.Exception.Message) }catch{} }
+                    $remainderText=$streamReader.ReadToEnd(); if($remainderText){ [void]$Lines.Add($remainderText); $drainedLineCount++ }
+                    Write-ReaderLog ("[Reader {0}] EOF. TotalLines={1}" -f $Tag,$drainedLineCount)
+                } catch { Write-ReaderLog ("[Reader {0}] Loop failed : {1}" -f $Tag,$_.Exception.Message) }
                 finally {
-                    try{ if($sr){ $sr.Dispose() } }catch{ try{Write-CustomLog ("[Reader:{0}] Dispose failed: {1}" -f $Tag,$_.Exception.Message)}catch{} }
-                    try{ Write-CustomLog ("[Reader:{0}] Finished." -f $Tag) }catch{}
+                    try{ if($streamReader){ $streamReader.Dispose() } }catch{ Write-ReaderLog ("[Reader {0}] Dispose failed : {1}" -f $Tag,$_.Exception.Message) }
+                    Write-ReaderLog ("[Reader {0}] Finished." -f $Tag)
                 }
             })
             $async = $ps.BeginInvoke()
             return @{ Runspace=$runspace; PowerShell=$ps; AsyncResult=$async; Lines=$lines }
         }
-        $stdoutReader = New-Drainer -TagPrefix "PID{0}-StdOutPipe" -FileStream $stdoutFileStream -ChildPid $childProcessId
-        $stderrReader = New-Drainer -TagPrefix "PID{0}-StdErrPipe" -FileStream $stderrFileStream -ChildPid $childProcessId
-        Write-CustomLog "Start-FromSystemAsCurrentUser: readers initialized"
+        $stdoutReader = New-Drainer -TagPrefix "StdOutPipe" -FileStream $stdoutFileStream -ChildPid $childProcessId
+        $stderrReader = New-Drainer -TagPrefix "StdErrPipe" -FileStream $stderrFileStream -ChildPid $childProcessId
+        Write-CustomLog "Start-FromSystemAsCurrentUser : readers initialized"
     }
     catch {
-        Write-CustomLog ("Start-FromSystemAsCurrentUser: reader init failed: " + $_.Exception.Message)
+        Write-CustomLog ("Start-FromSystemAsCurrentUser : reader init failed : " + $_.Exception.Message)
         try{ [Win32Api]::TerminateProcess($childProcessHandle,11) | Out-Null }catch{}
         foreach($h in $stdoutReadHandle,$stderrReadHandle,$primaryTokenHandle,$userTokenHandle,$childProcessHandle){
             if($h -ne [IntPtr]::Zero){ try{[Win32Api]::CloseHandle($h)|Out-Null}catch{} }
         }
         return @{
             Success=$false; ExitCode=11; Process_Id=$childProcessId;
-            Error=("Reader initialization failed: " + $_.Exception.Message);
+            Error=("Reader initialization failed : " + $_.Exception.Message);
             Stdout=@(); Stderr=@()
         }
     }
@@ -1604,26 +1612,26 @@ if (-not $script:__isPSCore) { try { $OutputEncoding = [Console]::OutputEncoding
 '@ + "`n"
         $utf8NoBom=New-Object System.Text.UTF8Encoding($false)
         $bytesLen=($utf8NoBom.GetByteCount($encodingPreamble)+$utf8NoBom.GetByteCount($scriptToSend))
-        Write-CustomLog ("Start-FromSystemAsCurrentUser: writing {0} bytes to child's STDIN" -f $bytesLen)
+        Write-CustomLog ("Start-FromSystemAsCurrentUser : writing {0} bytes to child's STDIN" -f $bytesLen)
         $stdinWriter.Write($encodingPreamble)
         $stdinWriter.Write($scriptToSend)
         $stdinWriter.Dispose()
         $stdinWriteHandle=[IntPtr]::Zero
-        Write-CustomLog "Start-FromSystemAsCurrentUser: STDIN closed (EOF signaled)"
+        Write-CustomLog "Start-FromSystemAsCurrentUser : STDIN closed (EOF signaled)"
     } catch {
-        Write-CustomLog ("Start-FromSystemAsCurrentUser: failed to write STDIN: " + $_.Exception.Message)
+        Write-CustomLog ("Start-FromSystemAsCurrentUser : failed to write STDIN : " + $_.Exception.Message)
         try{ [Win32Api]::TerminateProcess($childProcessHandle,5) | Out-Null }catch{}
         try{ if($stdoutReader){ $stdoutReader.PowerShell.EndInvoke($stdoutReader.AsyncResult) } }catch{}
         try{ if($stderrReader){ $stderrReader.PowerShell.EndInvoke($stderrReader.AsyncResult) } }catch{}
         try{ if($stdoutReader){ $stdoutReader.PowerShell.Dispose(); $stdoutReader.Runspace.Close() } }catch{}
         try{ if($stderrReader){ $stderrReader.PowerShell.Dispose(); $stderrReader.Runspace.Close() } }catch{}
         foreach($h in $stdoutReadHandle,$stderrReadHandle,$primaryTokenHandle,$userTokenHandle,$childProcessHandle){ if($h -ne [IntPtr]::Zero){ try{[Win32Api]::CloseHandle($h)|Out-Null}catch{} } }
-        return @{ Success=$false; ExitCode=5; Process_Id=$childProcessId; Error=("Failed to write to child STDIN: " + $_.Exception.Message); Stdout=@($stdoutReader.Lines.ToArray()); Stderr=@($stderrReader.Lines.ToArray()) }
+        return @{ Success=$false; ExitCode=5; Process_Id=$childProcessId; Error=("Failed to write to child STDIN : " + $_.Exception.Message); Stdout=@($stdoutReader.Lines.ToArray()); Stderr=@($stderrReader.Lines.ToArray()) }
     }
     # Wait for both drainers to reach EOF with an overall timeout; then collect exit code.
     $timeoutMilliseconds=[int]([Math]::Max(1,$TimeoutSeconds)*1000)
     $deadline=[DateTime]::UtcNow.AddMilliseconds($timeoutMilliseconds)
-    Write-CustomLog ("Start-FromSystemAsCurrentUser: waiting up to {0} ms for readers to reach EOF" -f $timeoutMilliseconds)
+    Write-CustomLog ("Start-FromSystemAsCurrentUser : waiting up to {0} ms for readers to reach EOF" -f $timeoutMilliseconds)
     $stdoutDone=$false; $stderrDone=$false
     try{
         $remaining=[int]([Math]::Max(1,($deadline-[DateTime]::UtcNow).TotalMilliseconds))
@@ -1632,7 +1640,7 @@ if (-not $script:__isPSCore) { try { $OutputEncoding = [Console]::OutputEncoding
         $stderrDone=$stderrReader.AsyncResult.AsyncWaitHandle.WaitOne($remaining)
     } catch {}
     if(-not ($stdoutDone -and $stderrDone)){
-        Write-CustomLog ("Start-FromSystemAsCurrentUser: timeout (StdOutDone={0} StdErrDone={1}); terminating child" -f $stdoutDone,$stderrDone)
+        Write-CustomLog ("Start-FromSystemAsCurrentUser : timeout (StdOutDone={0} StdErrDone={1}); terminating child" -f $stdoutDone,$stderrDone)
         try{ [Win32Api]::TerminateProcess($childProcessHandle,3) | Out-Null }catch{}
         try{ $stdoutReader.PowerShell.EndInvoke($stdoutReader.AsyncResult) }catch{}
         try{ $stderrReader.PowerShell.EndInvoke($stderrReader.AsyncResult) }catch{}
@@ -1646,14 +1654,17 @@ if (-not $script:__isPSCore) { try { $OutputEncoding = [Console]::OutputEncoding
     try{ $null=$stderrReader.PowerShell.EndInvoke($stderrReader.AsyncResult) }catch{}
     try{ $stdoutReader.PowerShell.Dispose(); $stdoutReader.Runspace.Close() }catch{}
     try{ $stderrReader.PowerShell.Dispose(); $stderrReader.Runspace.Close() }catch{}
-    # Obtain child's exit code.
+    # Obtain child's exit code. Pipe EOF can occur slightly before actual process termination,
+    # so wait on the process handle first, otherwise GetExitCodeProcess could return STILL_ACTIVE (259).
     $exitCodeValue=0; $gotExit=$false
+    try{ [void][Win32Api]::WaitForSingleObject($childProcessHandle,10000) }catch{}
     try{ $gotExit=[Win32Api]::GetExitCodeProcess($childProcessHandle,[ref]$exitCodeValue) }catch{ $gotExit=$false }
+    if($gotExit -and $exitCodeValue -eq 259){ Write-CustomLog "GetExitCodeProcess returned STILL_ACTIVE after wait, treating exit code as unavailable"; $gotExit=$false }
     # Snapshot collected output.
     $stdoutLines=@(); $stderrLines=@()
     try{ $stdoutLines=@($stdoutReader.Lines.ToArray()) }catch{}
     try{ $stderrLines=@($stderrReader.Lines.ToArray()) }catch{}
-    Write-CustomLog ("Start-FromSystemAsCurrentUser: ExitCode={0} StdOutLines={1} StdErrLines={2}" -f $exitCodeValue,$stdoutLines.Count,$stderrLines.Count)
+    Write-CustomLog ("Start-FromSystemAsCurrentUser : ExitCode={0} StdOutLines={1} StdErrLines={2}" -f $exitCodeValue,$stdoutLines.Count,$stderrLines.Count)
     # Close remaining handles.
     foreach($h in $stdoutReadHandle,$stderrReadHandle,$primaryTokenHandle,$userTokenHandle,$childProcessHandle){ if($h -ne [IntPtr]::Zero){ try{[Win32Api]::CloseHandle($h)|Out-Null}catch{} } }
     if($gotExit){
@@ -1668,17 +1679,16 @@ if (-not $script:__isPSCore) { try { $OutputEncoding = [Console]::OutputEncoding
 #                           Popup SCRIPT
 # ==================================================================
 
-function Merge-PopupScript($PopupTitle, $Log, $detectedProcesses, $Timer) {
-
+function Merge-PopupScript($PopupTitle, $Log, $LogMutexName, $detectedProcesses, $Timer) {
     function Format-PSLiteral([string]$s){
         if($null -eq $s){ return "" }
         # In a string between single quotes, only ' must be doubled.
         return ($s -replace "'","''")
     }
-
-    $Log     = Format-PSLiteral $Log
-    $PopupTitle = Format-PSLiteral $PopupTitle
-    $Timer   = [int]$Timer
+    $Log          = Format-PSLiteral $Log
+    $PopupTitle   = Format-PSLiteral $PopupTitle
+    $LogMutexName = Format-PSLiteral $LogMutexName
+    $Timer        = [int]$Timer
     # Builds the lines of a PS literal table: @( @{...}; @{...} )
     $itemsSb = New-Object Text.StringBuilder
     for($i=0; $i -lt $detectedProcesses.Count; $i++){
@@ -1695,6 +1705,7 @@ function Merge-PopupScript($PopupTitle, $Log, $detectedProcesses, $Timer) {
     $PopupScript = @"
 `$Log = '$Log'
 `$PopupTitle = '$PopupTitle'
+`$LogMutexName = '$LogMutexName'
 `$detectedProcesses = @(
 $psItems
 )
@@ -1707,21 +1718,31 @@ Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
 # ------------------------- Logging -------------------------
+# The backend creates the named mutex before spawning this popup, its DACL grants Authenticated Users access,
+# so opening it from the user session succeeds and log writes are serialized across all writers
+`$script:PopupLogMutex = `$null
+try { `$script:PopupLogMutex = [System.Threading.Mutex]::OpenExisting(`$LogMutexName) } catch { `$script:PopupLogMutex = `$null }
 function Write-CustomLog {
     param([string]`$Message)
     `$ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
     `$line = "`$ts - [Popup] - `$Message"
+    `$mutexAcquired = `$false
+    `$streamWriter = `$null
     try {
+        if (`$script:PopupLogMutex) { try { `$mutexAcquired = `$script:PopupLogMutex.WaitOne(3000) } catch [System.Threading.AbandonedMutexException] { `$mutexAcquired = `$true } }
         `$streamWriter = New-Object IO.StreamWriter(`$Log,`$true,[Text.Encoding]::UTF8)
         `$streamWriter.WriteLine(`$line)
-    } catch {} finally { if (`$streamWriter){`$streamWriter.Close()} }
+    } catch {} finally {
+        if (`$streamWriter){`$streamWriter.Close()}
+        if (`$mutexAcquired){ try { `$script:PopupLogMutex.ReleaseMutex() } catch {} }
+    }
     Write-Host `$line
 }
 Write-CustomLog "=== Popup starting ==="
 
 trap {
-    try   {Write-CustomLog "UNHANDLED ERROR: `$(`$_.Exception.Message)"}
-    catch {Write-Host        "UNHANDLED ERROR: `$(`$_.Exception.Message)"}
+    try   {Write-CustomLog "UNHANDLED ERROR : `$(`$_.Exception.Message)"}
+    catch {Write-Host        "UNHANDLED ERROR : `$(`$_.Exception.Message)"}
     continue
 }
 
@@ -2017,7 +2038,7 @@ function Set-HeaderLabelHeight([System.Windows.Forms.Label]`$label,[string]`$pre
 
 # Pulse animation
 function New-PulseFrameBitmap(`$Size,`$Scale,`$Alpha,`$BaseColor=`$null) {
-    if (-not `$BaseColor) { `$BaseColor = `$ColorBlue1 } # default: bleu
+    if (-not `$BaseColor) { `$BaseColor = `$ColorBlue1 } # default color
     `$bmp = New-Object Drawing.Bitmap `$Size,`$Size
     `$gfx = [Drawing.Graphics]::FromImage(`$bmp); `$gfx.SmoothingMode='AntiAlias'
     `$color = [Drawing.Color]::FromArgb([math]::Min([math]::Max([int]`$Alpha,0),255),`$BaseColor.R,`$BaseColor.G,`$BaseColor.B)
@@ -2068,24 +2089,19 @@ function New-ProcessRowPanel(`$Icon,[string]`$DisplayDescription,[string]`$Execu
     `$null = `$row.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle ([System.Windows.Forms.SizeType]::Absolute,64))) # Process icon
     `$null = `$row.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle ([System.Windows.Forms.SizeType]::Percent,100))) # Process infos
     `$null = `$row.RowStyles.Add((New-Object System.Windows.Forms.RowStyle ([System.Windows.Forms.SizeType]::Percent,100))) 
-
     `$iconBox = New-Object System.Windows.Forms.PictureBox
     `$iconBox.SizeMode='CenterImage'; `$iconBox.Image=`$Icon; `$iconBox.Dock='Fill'
-
     `$textStack = New-Object System.Windows.Forms.TableLayoutPanel
     `$textStack.Dock='Fill'; `$textStack.ColumnCount=1; `$textStack.RowCount=2
     `$null = `$textStack.RowStyles.Add((New-Object System.Windows.Forms.RowStyle ([System.Windows.Forms.SizeType]::Percent,50))) # Process description
     `$null = `$textStack.RowStyles.Add((New-Object System.Windows.Forms.RowStyle ([System.Windows.Forms.SizeType]::Percent,50))) # Process name
-
     `$titleLabel = New-Object System.Windows.Forms.Label
     `$titleLabel.Text = if ([string]::IsNullOrEmpty(`$DisplayDescription)) { `$ExecutableName } else { `$DisplayDescription }
     `$titleLabel.Dock='Fill'; `$titleLabel.TextAlign='MiddleLeft'; `$titleLabel.Font=`$FontTextBoldUI
     `$titleLabel.ForeColor=`$ColorTextMain; `$titleLabel.AutoSize=`$false; `$titleLabel.AutoEllipsis=`$true
-
     `$exeLabel = New-Object System.Windows.Forms.Label
     `$exeLabel.Text=`$ExecutableName; `$exeLabel.Dock='Fill'; `$exeLabel.TextAlign='MiddleLeft'
     `$exeLabel.Font=`$FontSmall; `$exeLabel.ForeColor=`$ColorBlue1
-
     `$null = `$textStack.Controls.Add(`$titleLabel,0,0)
     `$null = `$textStack.Controls.Add(`$exeLabel,0,1)
     `$null = `$row.Controls.Add(`$iconBox,0,0)
@@ -2186,6 +2202,7 @@ Enable-WindowDragOnControl `$MainContent.GetControlFromPosition(0,0)
 
 # ----- Show modal loop -----
 [void][System.Windows.Forms.Application]::Run(`$MainForm)
+try { if (`$script:PopupLogMutex) { `$script:PopupLogMutex.Close() } } catch {}
 "@
     return $PopupScript
 }
@@ -2199,9 +2216,13 @@ $NoPopup=$false
 if (-not $PopupTitle) { $PopupTitle="CloseProcessPopup"; $NoPopup=$true } else { $PopupTitle=Format-Name $PopupTitle }
 $script:LogPath = Resolve-LogPath -Title $PopupTitle -CandidateLog $Log
 $script:LogName = Format-Name ([IO.Path]::GetFileNameWithoutExtension($script:LogPath))
+# The named mutex is created before any log write so that every writer (main thread, drainer runspaces, popup process) shares it
+$script:LogMutexName = Get-LogMutexName -LogFilePath $script:LogPath
+$script:LogMutex = Open-LogMutex -MutexName $script:LogMutexName
 Write-CustomLog "========================================="
 Write-CustomLog "Starting BACKEND"
 Write-CustomLog "========================================="
+Write-CustomLog ("Log mutex : " + $script:LogMutexName)
 $sessionContext = Get-SessionContext
 $PopupExitCode = $null
 $launchOk      = $false
@@ -2232,7 +2253,7 @@ Write-CustomLog ("Active user     : " + $sessionContext.ActiveUserFullName)
 $detectedProcesses = Get-RunningProcesses -SessionId $targetSessionId -pwsh $pwsh -Processes $Process -ProcessesPaths $ProcessPath -ProcessTitles $ProcessTitle -ProcessDLL $ProcessDLL
 
 if (-not $NoPopup) {
-    $PopupScript    = Merge-PopupScript -PopupTitle $PopupTitle -Log $script:LogPath -detectedProcesses $detectedProcesses -Timer $Timer
+    $PopupScript    = Merge-PopupScript -PopupTitle $PopupTitle -Log $script:LogPath -LogMutexName $script:LogMutexName -detectedProcesses $detectedProcesses -Timer $Timer
     $launchResult = $null
     if ($sessionContext.IsSystem -or $sessionContext.IsProcessInteractive) {
         try {
@@ -2242,32 +2263,32 @@ if (-not $NoPopup) {
                 $launchResult = Start-FromCurrentUserStdin -Script $PopupScript
             }
         } catch {
-            Write-CustomLog ("EXCEPTION during Popup launch: " + $_.Exception.Message)
+            Write-CustomLog ("EXCEPTION during Popup launch : " + $_.Exception.Message)
             Stop-Script 4
         }
         $launchOk         = [bool]($launchResult -and $launchResult.Success)
         $PopupExitCode = if ($launchResult -and $launchResult.ContainsKey('ExitCode')) { [int]$launchResult.ExitCode } else { $null }
-        Write-CustomLog ("Popup returned: Success=$launchOk, ExitCode=$PopupExitCode")
+        Write-CustomLog ("Popup returned : Success=$launchOk, ExitCode=$PopupExitCode")
         if ($launchOk) {
             if ($PopupExitCode -eq 0) {
                 Write-CustomLog "Popup Completed"
             } else {
-                Write-CustomLog ("ERROR launching Popup: $PopupExitCode")
+                Write-CustomLog ("ERROR launching Popup : $PopupExitCode")
                 if ($launchResult.ContainsKey('Error') -and $launchResult.Error) {
-                    Write-CustomLog ("Error details: " + $launchResult.Error.Trim())
+                    Write-CustomLog ("Error details : " + $launchResult.Error.Trim())
                 }
                 Stop-Script $PopupExitCode
             }
         } else {
             $ExitCode = if ($PopupExitCode) { $PopupExitCode } else { 12 }
-            Write-CustomLog "ERROR: Popup not launched (ExitCode=$ExitCode)"
+            Write-CustomLog "ERROR : Popup not launched (ExitCode=$ExitCode)"
             if ($launchResult -and $launchResult.ContainsKey('Error') -and $launchResult.Error) {
-                Write-CustomLog ("Error details: " + $launchResult.Error.Trim())
+                Write-CustomLog ("Error details : " + $launchResult.Error.Trim())
             }
             Stop-Script $ExitCode
         }
     } else {
-        Write-CustomLog "ERROR: Unknown context."
+        Write-CustomLog "ERROR : Unknown context."
         Stop-Script 14
     }
 }
@@ -2277,19 +2298,37 @@ if (-not $NoPopup) {
 #                           CLOSE PROCESSES
 # ==================================================================
 
+function Close-KeepAliveHandles($detectedProcesses) {
+    # Releases the pinned process handles so the kernel can reclaim the process objects and recycle the PIDs
+    foreach($detectedItem in $detectedProcesses){
+        if($detectedItem -and $detectedItem.Process_Handles){
+            foreach($keepAliveHandle in $detectedItem.Process_Handles){
+                if($keepAliveHandle -ne [IntPtr]::Zero){ try{ [void][Win32Api]::CloseHandle($keepAliveHandle) }catch{} }
+            }
+        }
+    }
+}
+
 function Close-detectedProcesses($detectedProcesses, [int]$Attempts = 8) {
-    if (-not $detectedProcesses) { Write-CustomLog "Skip close: no detected items"; return }
+    if (-not $detectedProcesses) { Write-CustomLog "Skip close : no detected items"; return }
     if ($Attempts -lt 1) { $Attempts = 1 }
-
-    # Split targets: name-based vs PID-based (Title source => PID-only kill)
+    # Split targets : name-based vs PID-based (Title source => PID-only kill)
+    # PID-based targets carry a keep-alive handle opened at detection time : terminating through that handle
+    # is immune to PID recycling because the kernel cannot reuse a PID while a handle pins the process object
     $NameTargets=@()
-    $PidTargets=@()
-    $NamesFromTitle=@{} # names to exclude from /IM to avoid overkilling when Title was used
-
+    $HandleTargets=@()       # @{ ProcessId; Handle } pairs terminated via TerminateProcess on the pinned handle
+    $FallbackPidTargets=@()  # PIDs whose keep-alive handle could not be opened, terminated via taskkill /PID (best effort)
+    $NamesFromTitle=@{}      # names to exclude from /IM to avoid overkilling when Title was used
     foreach($d in $detectedProcesses){
         if($d -and $d.Process_Ids){
             if($d.CloseByPid){
-                foreach($p in $d.Process_Ids){ if($p -is [int]){ $PidTargets+=,$p } }
+                for($pidIndex=0;$pidIndex -lt $d.Process_Ids.Count;$pidIndex++){
+                    $targetProcessId=[int]$d.Process_Ids[$pidIndex]
+                    $targetHandle=[IntPtr]::Zero
+                    if($d.Process_Handles -and $pidIndex -lt $d.Process_Handles.Count){ $targetHandle=$d.Process_Handles[$pidIndex] }
+                    if($targetHandle -ne [IntPtr]::Zero){ $HandleTargets+=,@{ProcessId=$targetProcessId;Handle=$targetHandle} }
+                    else{ $FallbackPidTargets+=,$targetProcessId }
+                }
                 if($d.Name){ $NamesFromTitle[$d.Name.ToLowerInvariant()]=$true }
             }else{
                 if($d.Name){ $NameTargets+=,$d.Name.Trim() }
@@ -2297,9 +2336,8 @@ function Close-detectedProcesses($detectedProcesses, [int]$Attempts = 8) {
         }
     }
     $NameTargets = $NameTargets | Sort-Object | Select-Object -Unique
-    $PidTargets  = $PidTargets  | Sort-Object | Select-Object -Unique
+    $FallbackPidTargets = $FallbackPidTargets | Sort-Object | Select-Object -Unique
     if($NamesFromTitle.Count -gt 0){ $NameTargets = $NameTargets | Where-Object { -not $NamesFromTitle.ContainsKey($_.ToLowerInvariant()) } }
-
     function Invoke-Taskkill([string[]]$ProcessNames,[int]$Attempt){
         if (-not $ProcessNames -or $ProcessNames.Count -eq 0) { return }
         $batchSize = 30
@@ -2310,10 +2348,22 @@ function Close-detectedProcesses($detectedProcesses, [int]$Attempts = 8) {
             try {
                 $taskkillOutput = & taskkill.exe @taskkillArgs 2>$null
                 if ($taskkillOutput -and $taskkillOutput.Count -gt 0) {
-                    Write-CustomLog ("Taskkill by name (attempt {0}):" -f $Attempt)
+                    Write-CustomLog ("Taskkill by name (attempt {0}) :" -f $Attempt)
                     Write-CustomLog ($taskkillOutput -join [Environment]::NewLine)
                 }
-            } catch { Write-CustomLog ("ERROR: taskkill(/IM) failed (attempt {0}): {1}" -f $Attempt,$_.Exception.Message) }
+            } catch { Write-CustomLog ("ERROR : taskkill(/IM) failed (attempt {0}) : {1}" -f $Attempt,$_.Exception.Message) }
+        }
+    }
+    function Invoke-TerminateByHandle($PidHandlePairs,[int]$Attempt){
+        # WaitForSingleObject with a zero timeout returns WAIT_OBJECT_0 (0) once the process object is signaled (terminated)
+        if(-not $PidHandlePairs -or $PidHandlePairs.Count -eq 0){ return }
+        foreach($pair in $PidHandlePairs){
+            $waitResult=[Win32Api]::WaitForSingleObject($pair.Handle,0)
+            if($waitResult -eq 0){ continue }
+            if(-not [Win32Api]::TerminateProcess($pair.Handle,1)){
+                $lastError=[Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                Write-CustomLog ("TerminateProcess on PID {0} failed (attempt {1}, error={2})" -f $pair.ProcessId,$Attempt,$lastError)
+            }
         }
     }
     function Invoke-TaskkillByPid([int[]]$Pids,[int]$Attempt){
@@ -2326,10 +2376,10 @@ function Close-detectedProcesses($detectedProcesses, [int]$Attempts = 8) {
             try{
                 $taskkillOutput = & taskkill.exe @taskkillArgs 2>$null
                 if($taskkillOutput -and $taskkillOutput.Count -gt 0){
-                    Write-CustomLog ("Taskkill by PID (attempt {0}):" -f $Attempt)
+                    Write-CustomLog ("Taskkill by PID (attempt {0}) :" -f $Attempt)
                     Write-CustomLog ($taskkillOutput -join [Environment]::NewLine)
                 }
-            }catch{ Write-CustomLog ("ERROR: taskkill(/PID) failed (attempt {0}): {1}" -f $Attempt,$_.Exception.Message) }
+            }catch{ Write-CustomLog ("ERROR : taskkill(/PID) failed (attempt {0}) : {1}" -f $Attempt,$_.Exception.Message) }
         }
     }
     function Get-AliveByName([string[]]$ProcessNames){
@@ -2346,6 +2396,14 @@ function Close-detectedProcesses($detectedProcesses, [int]$Attempts = 8) {
         }
         return $alive
     }
+    function Get-AliveByHandle($PidHandlePairs){
+        # The pinned handle is authoritative : the process object stays signaled-free (still running) until real termination
+        $stillAlivePids=@()
+        foreach($pair in $PidHandlePairs){
+            if([Win32Api]::WaitForSingleObject($pair.Handle,0) -ne 0){ $stillAlivePids+=,$pair.ProcessId }
+        }
+        return ,$stillAlivePids
+    }
     function Get-AliveByPid([int[]]$Pids){
         $alive=@{}; if(-not $Pids -or $Pids.Count -eq 0){ return $alive }
         $idList=($Pids | Sort-Object -Unique)
@@ -2358,23 +2416,24 @@ function Close-detectedProcesses($detectedProcesses, [int]$Attempts = 8) {
         }
         return $alive
     }
-
     if($NameTargets.Count -gt 0){ Write-CustomLog ("Closing by name " + $NameTargets.Count + " process names via " + $Attempts + " grouped passes") }
-    if($PidTargets.Count  -gt 0){ Write-CustomLog ("Closing by PID "  + $PidTargets.Count  + " PIDs via "          + $Attempts + " grouped passes") }
-
+    if($HandleTargets.Count -gt 0){ Write-CustomLog ("Closing by pinned handle " + $HandleTargets.Count + " PIDs via " + $Attempts + " grouped passes") }
+    if($FallbackPidTargets.Count -gt 0){ Write-CustomLog ("Closing by PID (no handle available) " + $FallbackPidTargets.Count + " PIDs via " + $Attempts + " grouped passes") }
     for($attempt=1; $attempt -le $Attempts; $attempt++){
         if($NameTargets.Count -gt 0){ Write-CustomLog ("Taskkill(/IM) attempt " + $attempt + "/" + $Attempts); Invoke-Taskkill -ProcessNames $NameTargets -Attempt $attempt }
-        if($PidTargets.Count  -gt 0){ Write-CustomLog ("Taskkill(/PID) attempt " + $attempt + "/" + $Attempts); Invoke-TaskkillByPid -Pids $PidTargets -Attempt $attempt }
+        if($HandleTargets.Count -gt 0){ Write-CustomLog ("TerminateProcess(handle) attempt " + $attempt + "/" + $Attempts); Invoke-TerminateByHandle -PidHandlePairs $HandleTargets -Attempt $attempt }
+        if($FallbackPidTargets.Count -gt 0){ Write-CustomLog ("Taskkill(/PID) attempt " + $attempt + "/" + $Attempts); Invoke-TaskkillByPid -Pids $FallbackPidTargets -Attempt $attempt }
         if($attempt -lt $Attempts){ Start-Sleep -Seconds 1 }
     }
-
     $survivorNames=@(); $survivorPids=@()
     if($NameTargets.Count -gt 0){ $aliveNames=Get-AliveByName -ProcessNames $NameTargets; foreach($n in $NameTargets){ if($aliveNames[$n.ToLowerInvariant()]){ $survivorNames+=,$n } } }
-    if($PidTargets.Count  -gt 0){ $alivePids =Get-AliveByPid  -Pids $PidTargets;  foreach($p in $PidTargets){  if($alivePids[[int]$p]){ $survivorPids+=,$p } } }
-
+    if($HandleTargets.Count -gt 0){ $survivorPids+=@(Get-AliveByHandle -PidHandlePairs $HandleTargets) }
+    if($FallbackPidTargets.Count -gt 0){ $alivePids=Get-AliveByPid -Pids $FallbackPidTargets; foreach($p in $FallbackPidTargets){ if($alivePids[[int]$p]){ $survivorPids+=,$p } } }
+    # Pinned handles are no longer needed once the alive checks are done, releasing them lets the kernel reclaim the process objects
+    Close-KeepAliveHandles -detectedProcesses $detectedProcesses
     if(($survivorNames.Count -gt 0) -or ($survivorPids.Count -gt 0)){
-        if($survivorNames.Count -gt 0){ Write-CustomLog ("ERROR: still running by name after " + $Attempts + " attempts: " + ($survivorNames -join ", ")) }
-        if($survivorPids.Count  -gt 0){ Write-CustomLog ("ERROR: still running PIDs after "  + $Attempts + " attempts: " + (($survivorPids | ForEach-Object { [string]$_ }) -join ", ")) }
+        if($survivorNames.Count -gt 0){ Write-CustomLog ("ERROR : still running by name after " + $Attempts + " attempts : " + ($survivorNames -join ", ")) }
+        if($survivorPids.Count  -gt 0){ Write-CustomLog ("ERROR : still running PIDs after "  + $Attempts + " attempts : " + (($survivorPids | ForEach-Object { [string]$_ }) -join ", ")) }
         Stop-Script 15
     }else{
         Write-CustomLog ("All targeted processes are no longer running after " + $Attempts + " attempts")
@@ -2384,6 +2443,9 @@ function Close-detectedProcesses($detectedProcesses, [int]$Attempts = 8) {
 if (-not $Test) {
     Write-CustomLog "Closing detected processes..."
     Close-detectedProcesses -detectedProcesses $detectedProcesses -Attempts $Attempts
-} else { Write-CustomLog "Test mode -> not closing processes." }
+} else {
+    Write-CustomLog "Test mode -> not closing processes."
+    Close-KeepAliveHandles -detectedProcesses $detectedProcesses
+}
 
 Stop-Script 0
